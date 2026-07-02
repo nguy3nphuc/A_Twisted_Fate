@@ -1,0 +1,853 @@
+{
+    "knight": {
+        "scale": 2.8,
+        "folder": "assets/hero/knight",
+        "hurtbox_w": 25,
+        "hurtbox_h": 37,
+        "hurtbox_offset_x": 6,
+        "animations": {
+            "idle": {
+                "file": "knight_idle.png",
+                "frames": 7,
+                "duration": 150,
+                "loop": true,
+                "pivot_x": 27,
+                "pivot_y": 38
+            },
+            "run": {
+                "file": "knight_run.png",
+                "frames": 9,
+                "duration": 100,
+                "loop": true,
+                "pivot_x": 16,
+                "pivot_y": 37
+            },
+            "attack1": {
+                "file": "knight_attack1.png",
+                "frames": 9,
+                "duration": 70,
+                "loop": false,
+                "hit_frame": 5,
+                "pivot_x": 20,
+                "pivot_y": 41,
+                "hitbox_w": 42,
+                "hitbox_h": 11,
+                "hitbox_offset_x": 9,
+                "hitbox_offset_y": -17
+            },
+            "attack2": {
+                "file": "knight_attack2.png",
+                "frames": 6,
+                "duration": 70,
+                "loop": false,
+                "hit_frame": 3,
+                "pivot_x": 17,
+                "pivot_y": 49,
+                "hitbox_w": 33,
+                "hitbox_h": 11,
+                "hitbox_offset_x": 10,
+                "hitbox_offset_y": -17
+            },
+            "attack3": {
+                "file": "knight_attack3.png",
+                "frames": 14,
+                "duration": 70,
+                "loop": false,
+                "hit_frame": 4,
+                "pivot_x": 27,
+                "pivot_y": 46,
+                "hitbox_w": 81,
+                "hitbox_h": 12,
+                "hitbox_offset_x": -15,
+                "hitbox_offset_y": -18
+            },
+            "hit": {
+                "file": "knight_hurt.png",
+                "frames": 6,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 26,
+                "pivot_y": 37
+            },
+            "death": {
+                "file": "knight_death.png",
+                "frames": 26,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 10,
+                "pivot_y": 40
+            },
+            "defend": {
+                "file": "knight_defend.png",
+                "frames": 11,
+                "duration": 120,
+                "loop": false,
+                "pivot_x": 27,
+                "pivot_y": 36
+            },
+            "ultimate": {
+                "file": "knight_ultimate.png",
+                "frames": 44,
+                "duration": 65,
+                "loop": false,
+                "pivot_x": 59,
+                "pivot_y": 166
+            }
+        }
+    },
+    "archer": {
+        "scale": 2.8,
+        "folder": "assets/hero/archer",
+        "hurtbox_w": 20,
+        "hurtbox_h": 37,
+        "hurtbox_offset_x": 7,
+        "animations": {
+            "idle": {
+                "file": "archer_idle.png",
+                "frames": 13,
+                "duration": 120,
+                "loop": true,
+                "pivot_x": 8,
+                "pivot_y": 37
+            },
+            "run": {
+                "file": "archer_run.png",
+                "frames": 8,
+                "duration": 90,
+                "loop": true,
+                "pivot_x": 9,
+                "pivot_y": 43
+            },
+            "attack": {
+                "file": "archer_attack.png",
+                "frames": 9,
+                "duration": 70,
+                "loop": false,
+                "pivot_x": 10,
+                "pivot_y": 42
+            },
+            "attack_combo": {
+                "file": "archer_attack_combo.png",
+                "frames": 18,
+                "duration": 65,
+                "loop": false,
+                "pivot_x": 10,
+                "pivot_y": 46
+            },
+            "dash": {
+                "file": "archer_dash.png",
+                "frames": 5,
+                "duration": 70,
+                "loop": false,
+                "pivot_x": 16,
+                "pivot_y": 39
+            },
+            "dash_smoke": {
+                "file": "dash_smoke.png",
+                "frames": 9,
+                "duration": 55,
+                "loop": false,
+                "scale": 1.5,
+                "offset_x": 0,
+                "offset_y": -15,
+                "pivot_x": 56,
+                "pivot_y": 32
+            },
+            "ultimate": {
+                "file": "archer_ultimate.png",
+                "frames": 16,
+                "duration": 75,
+                "loop": false,
+                "pivot_x": 29,
+                "pivot_y": 49
+            },
+            "ultimate_effect": {
+                "file": "archer_ultimate_effect.png",
+                "frames": 7,
+                "duration": 80,
+                "loop": false,
+                "scale": 2.5,
+                "offset_x": 10,
+                "offset_y": 0,
+                "pivot_x": 2,
+                "pivot_y": 58
+            },
+            "hit": {
+                "file": "archer_hurt.png",
+                "frames": 5,
+                "duration": 80,
+                "loop": false,
+                "pivot_x": 12,
+                "pivot_y": 37
+            },
+            "death": {
+                "file": "archer_death.png",
+                "frames": 9,
+                "duration": 110,
+                "loop": false,
+                "pivot_x": 12,
+                "pivot_y": 37
+            }
+        }
+    },
+    "lizardman": {
+        "scale": 2,
+        "folder": "assets/monsters/lizardman",
+        "hurtbox_w": 46,
+        "hurtbox_h": 56,
+        "hurtbox_offset_x": 6,
+        "animations": {
+            "idle": {
+                "file": "lizardman_idle.png",
+                "frames": 15,
+                "duration": 150,
+                "loop": true,
+                "pivot_x": 23,
+                "pivot_y": 56
+            },
+            "run": {
+                "file": "lizardman_walk.png",
+                "frames": 10,
+                "duration": 100,
+                "loop": true,
+                "pivot_x": 23,
+                "pivot_y": 56
+            },
+            "attack1": {
+                "file": "lizardman_attack1.png",
+                "frames": 8,
+                "duration": 75,
+                "loop": false,
+                "hit_frame": 3,
+                "pivot_x": 21,
+                "pivot_y": 74,
+                "hitbox_w": 42,
+                "hitbox_h": 17,
+                "hitbox_offset_x": 13,
+                "hitbox_offset_y": -29
+            },
+            "attack2": {
+                "file": "lizardman_attack2.png",
+                "frames": 7,
+                "duration": 80,
+                "loop": false,
+                "hit_frame": 3,
+                "pivot_x": 22,
+                "pivot_y": 68,
+                "hitbox_w": 55,
+                "hitbox_h": 15,
+                "hitbox_offset_x": 17,
+                "hitbox_offset_y": -28
+            },
+            "hit": {
+                "file": "lizardman_hurt.png",
+                "frames": 6,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 25,
+                "pivot_y": 57
+            },
+            "death": {
+                "file": "lizardman_death.png",
+                "frames": 13,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 28,
+                "pivot_y": 57
+            }
+        }
+    },
+    "cyclop": {
+        "scale": 2.5,
+        "folder": "assets/monsters/cyclop",
+        "hurtbox_w": 50,
+        "hurtbox_h": 66,
+        "hurtbox_offset_x": 11,
+        "animations": {
+            "idle": {
+                "file": "cyclop_idle.png",
+                "frames": 15,
+                "duration": 150,
+                "loop": true,
+                "pivot_x": 20,
+                "pivot_y": 70
+            },
+            "run": {
+                "file": "cyclop_walk.png",
+                "frames": 12,
+                "duration": 100,
+                "loop": true,
+                "pivot_x": 19,
+                "pivot_y": 70
+            },
+            "attack1": {
+                "file": "cyclop_attack1.png",
+                "frames": 17,
+                "duration": 80,
+                "loop": false,
+                "hit_frame": 10,
+                "pivot_x": 31,
+                "pivot_y": 88,
+                "hitbox_w": 74,
+                "hitbox_h": 22,
+                "hitbox_offset_x": 25,
+                "hitbox_offset_y": -19
+            },
+            "attack2": {
+                "file": "cyclop_attack2.png",
+                "frames": 23,
+                "duration": 80,
+                "loop": false,
+                "hit_frame": 11,
+                "pivot_x": 19,
+                "pivot_y": 103,
+                "hitbox_w": 98,
+                "hitbox_h": 46,
+                "hitbox_offset_x": 32,
+                "hitbox_offset_y": -26
+            },
+            "hit": {
+                "file": "cyclop_hurt.png",
+                "frames": 6,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 23,
+                "pivot_y": 73
+            },
+            "death": {
+                "file": "cyclop_death.png",
+                "frames": 9,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 23,
+                "pivot_y": 73
+            }
+        }
+    },
+    "kobold": {
+        "scale": 1.5,
+        "folder": "assets/monsters/kobold",
+        "hurtbox_w": 49,
+        "hurtbox_h": 52,
+        "hurtbox_offset_x": 1,
+        "animations": {
+            "idle": {
+                "file": "kobold_idle.png",
+                "frames": 6,
+                "duration": 150,
+                "loop": true,
+                "pivot_x": 24,
+                "pivot_y": 60
+            },
+            "run": {
+                "file": "kobold_run.png",
+                "frames": 8,
+                "duration": 90,
+                "loop": true,
+                "pivot_x": 34,
+                "pivot_y": 59
+            },
+            "attack1": {
+                "file": "kobold_attack1.png",
+                "frames": 5,
+                "duration": 75,
+                "loop": false,
+                "hit_frame": 3,
+                "pivot_x": 60,
+                "pivot_y": 57,
+                "hitbox_w": 53,
+                "hitbox_h": 21,
+                "hitbox_offset_x": 0,
+                "hitbox_offset_y": -23
+            },
+            "attack2": {
+                "file": "kobold_attack2.png",
+                "frames": 5,
+                "duration": 75,
+                "loop": false,
+                "hit_frame": 3,
+                "pivot_x": 43,
+                "pivot_y": 53,
+                "hitbox_w": 46,
+                "hitbox_h": 16,
+                "hitbox_offset_x": 1,
+                "hitbox_offset_y": -24
+            },
+            "attack3": {
+                "file": "kobold_attack3.png",
+                "frames": 6,
+                "duration": 75,
+                "loop": false,
+                "hit_frame": 4,
+                "pivot_x": 32,
+                "pivot_y": 71,
+                "hitbox_w": 44,
+                "hitbox_h": 17,
+                "hitbox_offset_x": 5,
+                "hitbox_offset_y": -22
+            },
+            "dash": {
+                "file": "kobold_dash.png",
+                "frames": 6,
+                "duration": 65,
+                "loop": false,
+                "hit_frame": 3,
+                "pivot_x": 27,
+                "pivot_y": 59
+            },
+            "dash_special": {
+                "file": "kobold_dash_special_attack.png",
+                "frames": 11,
+                "duration": 65,
+                "loop": false,
+                "hit_frame": 6,
+                "pivot_x": 34,
+                "pivot_y": 60,
+                "hitbox_w": 86,
+                "hitbox_h": 33,
+                "hitbox_offset_x": 14,
+                "hitbox_offset_y": -24
+            },
+            "jump": {
+                "file": "kobold_jump.png",
+                "frames": 5,
+                "duration": 80,
+                "loop": false,
+                "pivot_x": 25,
+                "pivot_y": 78
+            },
+            "hit": {
+                "file": "kobold_hurt.png",
+                "frames": 4,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 39,
+                "pivot_y": 60
+            },
+            "death": {
+                "file": "kobold_death.png",
+                "frames": 11,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 40,
+                "pivot_y": 57
+            }
+        }
+    },
+    "fireworm": {
+        "scale": 2.5,
+        "folder": "assets/monsters/fire_worm/worm",
+        "hurtbox_w": 29,
+        "hurtbox_h": 30,
+        "hurtbox_offset_x": 12,
+        "animations": {
+            "idle": {
+                "file": "worm_idle.png",
+                "frames": 9,
+                "duration": 150,
+                "loop": true,
+                "pivot_x": 25,
+                "pivot_y": 45
+            },
+            "run": {
+                "file": "worm_walk.png",
+                "frames": 9,
+                "duration": 100,
+                "loop": true,
+                "pivot_x": 25,
+                "pivot_y": 43
+            },
+            "attack": {
+                "file": "worm_attack.png",
+                "frames": 16,
+                "duration": 75,
+                "loop": false,
+                "pivot_x": 25,
+                "pivot_y": 54
+            },
+            "hit": {
+                "file": "worm_hurt.png",
+                "frames": 4,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 26,
+                "pivot_y": 45
+            },
+            "death": {
+                "file": "worm_death.png",
+                "frames": 8,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 29,
+                "pivot_y": 49
+            }
+        }
+    },
+    "fireball": {
+        "scale": 2.5,
+        "folder": "assets/monsters/fire_worm/fire_ball",
+        "animations": {
+            "move": {
+                "file": "move.png",
+                "frames": 6,
+                "duration": 80,
+                "loop": true,
+                "pivot_x": 21,
+                "pivot_y": 29
+            },
+            "explosion": {
+                "file": "explosion.png",
+                "frames": 7,
+                "duration": 70,
+                "loop": false,
+                "pivot_x": 20,
+                "pivot_y": 31
+            }
+        },
+        "hurtbox_w": 6,
+        "hurtbox_h": 12,
+        "hurtbox_offset_x": -2
+    },
+    "goblin_tank": {
+        "scale": 3.5,
+        "folder": "assets/monsters/goblin_tank",
+        "hurtbox_w": 30,
+        "hurtbox_h": 48,
+        "hurtbox_offset_x": 7,
+        "animations": {
+            "idle": {
+                "file": "goblin_tank_idle.png",
+                "frames": 9,
+                "duration": 150,
+                "loop": true,
+                "pivot_x": 12,
+                "pivot_y": 49
+            },
+            "run": {
+                "file": "goblin_tank_run.png",
+                "frames": 11,
+                "duration": 100,
+                "loop": true,
+                "pivot_x": 18,
+                "pivot_y": 48
+            },
+            "attack1": {
+                "file": "goblin_tank_attack1.png",
+                "frames": 20,
+                "duration": 80,
+                "loop": false,
+                "hit_frame": [
+                    8,
+                    13
+                ],
+                "pivot_x": 24,
+                "pivot_y": 48,
+                "hitbox_w": 54,
+                "hitbox_h": 22,
+                "hitbox_offset_x": 19,
+                "hitbox_offset_y": -12
+            },
+            "attack2": {
+                "file": "goblin_tank_attack2.png",
+                "frames": 22,
+                "duration": 80,
+                "loop": false,
+                "hit_frame": 9,
+                "pivot_x": 27,
+                "pivot_y": 67,
+                "hitbox_w": 51,
+                "hitbox_h": 33,
+                "hitbox_offset_x": 13,
+                "hitbox_offset_y": -3
+            },
+            "jump": {
+                "file": "goblin_tank_jump.png",
+                "frames": 16,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 28,
+                "pivot_y": 61
+            },
+            "hit": {
+                "file": "goblin_tank_hurt.png",
+                "frames": 4,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 15,
+                "pivot_y": 46
+            },
+            "death": {
+                "file": "goblin_tank_death.png",
+                "frames": 20,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 19,
+                "pivot_y": 44
+            }
+        }
+    },
+    "goblin_warrior": {
+        "scale": 2.4,
+        "folder": "assets/monsters/goblin_warrior",
+        "hurtbox_w": 20,
+        "hurtbox_h": 37,
+        "hurtbox_offset_x": 10,
+        "animations": {
+            "idle": {
+                "file": "goblin_warrior_idle.png",
+                "frames": 6,
+                "duration": 150,
+                "loop": true,
+                "pivot_x": 8,
+                "pivot_y": 40
+            },
+            "run": {
+                "file": "goblin_warrior_run.png",
+                "frames": 16,
+                "duration": 100,
+                "loop": true,
+                "pivot_x": 7,
+                "pivot_y": 37
+            },
+            "attack1": {
+                "file": "goblin_warrior_attack1.png",
+                "frames": 10,
+                "duration": 80,
+                "loop": false,
+                "hit_frame": 6,
+                "pivot_x": 19,
+                "pivot_y": 49,
+                "hitbox_w": 47,
+                "hitbox_h": 19,
+                "hitbox_offset_x": 13,
+                "hitbox_offset_y": -15
+            },
+            "attack2": {
+                "file": "goblin_warrior_attack2.png",
+                "frames": 10,
+                "duration": 80,
+                "loop": false,
+                "hit_frame": 6,
+                "pivot_x": 16,
+                "pivot_y": 53,
+                "hitbox_w": 38,
+                "hitbox_h": 19,
+                "hitbox_offset_x": 16,
+                "hitbox_offset_y": -16
+            },
+            "hit": {
+                "file": "goblin_warrior_hurt.png",
+                "frames": 7,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 9,
+                "pivot_y": 40
+            },
+            "death": {
+                "file": "goblin_warrior_death.png",
+                "frames": 6,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 33,
+                "pivot_y": 40
+            }
+        }
+    },
+    "goblin_spearman": {
+        "scale": 2.4,
+        "folder": "assets/monsters/goblin_spearman",
+        "hurtbox_w": 24,
+        "hurtbox_h": 39,
+        "hurtbox_offset_x": -7,
+        "animations": {
+            "idle": {
+                "file": "goblin_spearman_idle.png",
+                "frames": 6,
+                "duration": 150,
+                "loop": true,
+                "pivot_x": 20,
+                "pivot_y": 48
+            },
+            "run": {
+                "file": "goblin_spearman_walk.png",
+                "frames": 8,
+                "duration": 100,
+                "loop": true,
+                "pivot_x": 18,
+                "pivot_y": 50
+            },
+            "attack": {
+                "file": "goblin_spearman_attack.png",
+                "frames": 19,
+                "duration": 80,
+                "loop": false,
+                "pivot_x": 25,
+                "pivot_y": 48
+            },
+            "hit": {
+                "file": "goblin_spearman_hurt.png",
+                "frames": 6,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 25,
+                "pivot_y": 48
+            },
+            "death": {
+                "file": "goblin_spearman_death.png",
+                "frames": 5,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 61,
+                "pivot_y": 48
+            }
+        }
+    },
+    "fat_cultist": {
+        "scale": 2.5,
+        "folder": "assets/monsters/fat_cultist",
+        "hurtbox_w": 44,
+        "hurtbox_h": 60,
+        "hurtbox_offset_x": 0,
+        "animations": {
+            "idle": {
+                "file": "Fat_Cultist_Idle.png",
+                "frames": 10,
+                "duration": 150,
+                "loop": true,
+                "pivot_x": 22,
+                "pivot_y": 38
+            },
+            "run": {
+                "file": "Fat_Cultist_Run.png",
+                "frames": 7,
+                "duration": 100,
+                "loop": true,
+                "pivot_x": 24,
+                "pivot_y": 42
+            },
+            "attack1": {
+                "file": "Fat_Cultist_Attack1.png",
+                "frames": 12,
+                "duration": 80,
+                "loop": false,
+                "hit_frame": 6,
+                "pivot_x": 28,
+                "pivot_y": 52,
+                "hitbox_w": 60,
+                "hitbox_h": 40,
+                "hitbox_offset_x": 0,
+                "hitbox_offset_y": 0
+            },
+            "attack2": {
+                "file": "Fat_Cultist_Attack2.png",
+                "frames": 18,
+                "duration": 80,
+                "loop": false,
+                "hit_frame": 10,
+                "pivot_x": 28,
+                "pivot_y": 52,
+                "hitbox_w": 80,
+                "hitbox_h": 50,
+                "hitbox_offset_x": 0,
+                "hitbox_offset_y": 0
+            },
+            "hit": {
+                "file": "Fat_Cultist_Hurt.png",
+                "frames": 3,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 24,
+                "pivot_y": 38
+            },
+            "death": {
+                "file": "Fat_Cultist_Dead.png",
+                "frames": 20,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 20,
+                "pivot_y": 38
+            }
+        }
+    },
+    "bringer_of_death": {
+        "scale": 2.5,
+        "folder": "assets/monsters/bringer_of_death",
+        "hurtbox_w": 40,
+        "hurtbox_h": 80,
+        "hurtbox_offset_x": 0,
+        "animations": {
+            "idle": {
+                "file": "Bringer_of_Death_Idle.png",
+                "frames": 6,
+                "duration": 150,
+                "loop": true,
+                "pivot_x": 31,
+                "pivot_y": 50
+            },
+            "run": {
+                "file": "Bringer_of_Death_Walk.png",
+                "frames": 8,
+                "duration": 100,
+                "loop": true,
+                "pivot_x": 28,
+                "pivot_y": 49
+            },
+            "attack": {
+                "file": "Bringer-of-Death_Attack.png",
+                "frames": 16,
+                "duration": 70,
+                "loop": false,
+                "hit_frame": 7,
+                "pivot_x": 43,
+                "pivot_y": 79,
+                "hitbox_w": 80,
+                "hitbox_h": 60,
+                "hitbox_offset_x": 0,
+                "hitbox_offset_y": 0
+            },
+            "cast": {
+                "file": "Bringer_of_Death_Cast.png",
+                "frames": 5,
+                "duration": 120,
+                "loop": false,
+                "pivot_x": 48,
+                "pivot_y": 86
+            },
+            "hit": {
+                "file": "Bringer_of_Death_Hurt.png",
+                "frames": 2,
+                "duration": 100,
+                "loop": false,
+                "pivot_x": 35,
+                "pivot_y": 49
+            },
+            "death": {
+                "file": "Bringer_of_Death_Death.png",
+                "frames": 8,
+                "duration": 120,
+                "loop": false,
+                "pivot_x": 33,
+                "pivot_y": 61
+            }
+        }
+    },
+    "death_bringer_spell": {
+        "scale": 2.5,
+        "folder": "assets/monsters/bringer_of_death",
+        "animations": {
+            "spell": {
+                "file": "Bringer-of-Death_Spell.png",
+                "frames": 10,
+                "duration": 80,
+                "loop": false,
+                "hit_frame": 4,
+                "pivot_x": 29,
+                "pivot_y": 51,
+                "hitbox_w": 80,
+                "hitbox_h": 120,
+                "hitbox_offset_x": -40,
+                "hitbox_offset_y": -100
+            }
+        }
+    }
+}
