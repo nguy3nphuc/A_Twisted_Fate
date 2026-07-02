@@ -332,6 +332,9 @@ class Game:
 
     def update(self, dt):
         keys = pygame.key.get_pressed()
+        for entity in list(self.players) + list(self.enemies):
+            if hasattr(entity, 'update_debuffs'):
+                entity.update_debuffs(dt)
         # update players
         for player in self.players:
             player.update(dt, keys, self.groups)
@@ -411,6 +414,11 @@ class Game:
                     final_damage = int(hb.damage * CRIT_MULTIPLIER) if is_crit else hb.damage
                     old_hp = enemy.hp
                     enemy.take_damage(final_damage, source_x=hb.owner.rect.centerx, is_crit=is_crit)
+                    if hasattr(hb.owner, 'attack_buff'):
+                        if hb.owner.attack_buff == 'slow':
+                            enemy.apply_debuff('slow', 3000) # Làm chậm 3 giây
+                        elif hb.owner.attack_buff == 'burn':
+                            enemy.apply_debuff('burn', 4000) # Thiêu đốt 4 giây
                     if enemy.hp < old_hp:
                         dmg_num = DamageNumber(enemy.hurtbox.centerx, enemy.hurtbox.top, final_damage, is_crit=is_crit)
                         self.damage_numbers.add(dmg_num)
@@ -444,6 +452,11 @@ class Game:
                         self.effects.add(blood)
                         hit_effect = HitVFX(enemy.hurtbox.centerx, enemy.hurtbox.centery, getattr(enemy, 'facing', 1), enemy.foot_y)
                         self.effects.add(hit_effect)
+                    if hasattr(hb.owner, 'attack_buff'):
+                        if hb.owner.attack_buff == 'slow':
+                            enemy.apply_debuff('slow', 3000) # Làm chậm 3 giây
+                        elif hb.owner.attack_buff == 'burn':
+                            enemy.apply_debuff('burn', 4000) # Thiêu đốt 4 giây
                     arrow.kill()
                     break
 
@@ -568,8 +581,9 @@ class Game:
         for enemy in self.enemies:
             if enemy.hp <= 0 and not getattr(enemy, 'dropped_potion', False):
                 enemy.dropped_potion = True
-                if random.random() < 1:  # 15% rơi bình máu
-                    potion = HealthPotion(enemy.hurtbox.centerx, enemy.foot_y)
+                if random.random() < 0.25:  # 25% tỷ lệ rơi vật phẩm
+                    potion_class = random.choice([HealthPotion, IcePotion, FirePotion, PoisonPotion])
+                    potion = potion_class(enemy.hurtbox.centerx, enemy.foot_y)
                     self.potions.add(potion)
                     self.all_sprites.add(potion)
 
@@ -578,7 +592,17 @@ class Game:
             if player.hp > 0:
                 for potion in list(self.potions):
                     if player.hurtbox.colliderect(potion.rect):
-                        player.hp = min(player.max_hp, player.hp + potion.heal_amount)
+                        if potion.type == 'health':
+                            player.hp = min(player.max_hp, player.hp + potion.heal_amount)
+                        elif potion.type == 'slow_buff':
+                            player.attack_buff = 'slow'
+                            player.buff_timer = 10000  # Buff kéo dài 10 giây
+                        elif potion.type == 'burn_buff':
+                            player.attack_buff = 'burn'
+                            player.buff_timer = 10000  # Buff kéo dài 10 giây
+                        elif potion.type == 'poison':
+                            # Thuốc độc gây debuff trực tiếp cho người nhặt
+                            player.apply_debuff('poison', 6000) # Trúng độc 6 giây
                         potion.kill()
 
     def draw(self):

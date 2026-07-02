@@ -58,6 +58,64 @@ class HealthMixin:
         # at runtime when enemy instances are created.
         self.health_bar = EnemyHealthBar(max_hp)
 
+        # Player buff
+        self.attack_buff = None
+        self.buff_timer = 0
+
+        # Enemy debuff
+        self.debuffs = {'slow': 0, 'burn': 0, 'poison': 0}
+        self.tick_timers = {'burn': 0, 'poison': 0}
+
+    def apply_debuff(self, name, duration):
+        """Activate or refresh debuff"""
+        self.debuffs[name] = max(self.debuffs.get(name,0), duration)
+
+    def update_debuffs(self, dt):
+        """Update debuffs of enemy"""
+        if self.hp <= 0:
+            return
+
+        # 1. Update buff timer
+        if self.buff_timer > 0:
+            self.buff_timer -= dt
+            if self.buff_timer <= 0:
+                self.attack_buff = None
+
+        # 2. Update slow debuff
+        if self.debuffs['slow'] > 0:
+            self.debuffs['slow'] -= dt
+
+        # 3. Update burn debuff (Decrease 5hp per second)
+        if self.debuffs['burn'] > 0:
+            self.debuffs['burn'] -= dt
+            self.tick_timers['burn'] += dt
+            if self.tick_timers['burn'] >= 1000:
+                self.tick_timers['burn'] -= 1000
+                self._take_dot_damage(5)
+
+        # 4. Update poison debuff (Decrease 8hp per second)
+        if self.debuffs['poison'] > 0:
+            self.debuffs['poison'] -= dt
+            self.tick_timers['poison'] += dt
+            if self.tick_timers['poison'] >= 1000:
+                self.tick_timers['poison'] -= 1000
+                self._take_dot_damage(8)
+
+    def _take_dot_damage(self, amount):
+        """Decrease hp without knockback"""
+        if self.hp <= 0:
+            return
+        self.hp -= amount
+        if self.hp <= 0:
+            self.hp = 0
+            self.on_death()
+        if self.health_bar is not None:
+            self.health_bar.notify_damage(self.hp)
+
+    def get_speed_multiplier(self):
+        """Return speed coefficient"""
+        return 0.5 if self.debuffs['slow'] > 0 else 1.0
+
     def _ensure_health_bar(self):
         """No-op kept for compatibility; bar is now created in __init__."""
         pass
@@ -1084,14 +1142,15 @@ class Lizardman(pygame.sprite.Sprite, HealthMixin):
             if abs(real_dist_x) > LIZARDMAN_ATTACK_RANGE_X or abs(real_dist_y) > LIZARDMAN_ATTACK_RANGE_Y:
                 if abs(dist_x) > 5:
                     if dist_x < 0:
-                        self.rect.x -= self.speed
+                        self.rect.x -= self.speed*self.get_speed_multiplier()
                         self.facing = -1
                     else:
-                        self.rect.x += self.speed
+                        self.rect.x += self.speed*self.get_speed_multiplier()
                         self.facing = 1
                     moving = True
+                self.rect.x += int(self.vel.x * self.get_speed_multiplier())
                 if abs(dist_y) > 5:
-                    self.rect.y += self.speed if dist_y > 0 else -self.speed
+                    self.rect.y += (self.speed if dist_y > 0 else -self.speed)*self.get_speed_multiplier()
                     moving = True
                 if random.random() < 0.005:
                     self.ai_state = 'idle'
@@ -1332,14 +1391,15 @@ class Cyclop(pygame.sprite.Sprite, HealthMixin):
             if abs(real_dist_x) > CYCLOP_ATTACK_RANGE_X or abs(real_dist_y) > CYCLOP_ATTACK_RANGE_Y:
                 if abs(dist_x) > 5:
                     if dist_x < 0:
-                        self.rect.x -= self.speed
+                        self.rect.x -= self.speed*self.get_speed_multiplier()
                         self.facing = -1
                     else:
-                        self.rect.x += self.speed
+                        self.rect.x += self.speed*self.get_speed_multiplier()
                         self.facing = 1
                     moving = True
+                self.rect.x += int(self.vel.x * self.get_speed_multiplier())
                 if abs(dist_y) > 5:
-                    self.rect.y += self.speed if dist_y > 0 else -self.speed
+                    self.rect.y += (self.speed if dist_y > 0 else -self.speed)*self.get_speed_multiplier()
                     moving = True
                 if random.random() < 0.005:
                     self.ai_state = 'idle'
@@ -1683,12 +1743,13 @@ class Kobold(pygame.sprite.Sprite, HealthMixin):
                     # Dash on cooldown - walk toward player
                     if abs(dist_x) > 5:
                         if dist_x < 0:
-                            self.rect.x -= self.speed
+                            self.rect.x -= self.speed*self.get_speed_multiplier()
                             self.facing = -1
                         else:
-                            self.rect.x += self.speed
+                            self.rect.x += self.speed*self.get_speed_multiplier()
                             self.facing = 1
                         moving = True
+                    self.rect.x += int(self.vel.x * self.get_speed_multiplier())
                     if abs(dist_y) > 5:
                         self.rect.y += self.speed if dist_y > 0 else -self.speed
                         moving = True
@@ -1696,14 +1757,15 @@ class Kobold(pygame.sprite.Sprite, HealthMixin):
                 # Out of dash range - just chase
                 if abs(dist_x) > 5:
                     if dist_x < 0:
-                        self.rect.x -= self.speed
+                        self.rect.x -= self.speed*self.get_speed_multiplier()
                         self.facing = -1
                     else:
-                        self.rect.x += self.speed
+                        self.rect.x += self.speed*self.get_speed_multiplier()
                         self.facing = 1
                     moving = True
+                self.rect.x += int(self.vel.x * self.get_speed_multiplier())
                 if abs(dist_y) > 5:
-                    self.rect.y += self.speed if dist_y > 0 else -self.speed
+                    self.rect.y += (self.speed if dist_y > 0 else -self.speed)*self.get_speed_multiplier()
                     moving = True
                 if random.random() < 0.005:
                     self.ai_state = 'idle'
@@ -1923,14 +1985,15 @@ class Fireworm(pygame.sprite.Sprite, HealthMixin):
                 dist_y = target_y - self.rect.bottom
                 if abs(dist_x) > 5:
                     if dist_x < 0:
-                        self.rect.x -= self.speed
+                        self.rect.x -= self.speed*self.get_speed_multiplier()
                         self.facing = -1
                     else:
-                        self.rect.x += self.speed
+                        self.rect.x += self.speed*self.get_speed_multiplier()
                         self.facing = 1
                     moving = True
+                self.rect.x += int(self.vel.x * self.get_speed_multiplier())
                 if abs(dist_y) > 5:
-                    self.rect.y += self.speed if dist_y > 0 else -self.speed
+                    self.rect.y += (self.speed if dist_y > 0 else -self.speed)*self.get_speed_multiplier()
                     moving = True
                 if random.random() < 0.005:
                     self.ai_state = 'idle'
@@ -2041,8 +2104,9 @@ class Fireball(pygame.sprite.Sprite):
 class Arrow(pygame.sprite.Sprite):
     ARROW_SCALE = 2.5  # match the archer's sprite scale
 
-    def __init__(self, x, y, facing, damage=15):
+    def __init__(self, owner, x, y, facing, damage=15):
         super().__init__()
+        self.owner = owner
         try:
             raw = pygame.image.load(ARROW_IMAGE).convert_alpha()
             aw = int(raw.get_width() * self.ARROW_SCALE)
@@ -2757,7 +2821,7 @@ class Archer(pygame.sprite.Sprite, HealthMixin):
     def spawn_arrow(self, groups):
         spawn_y = self.rect.bottom - 6 - self.rect.height // 2
         spawn_x = self.rect.centerx + (20 * self.facing)
-        arrow = Arrow(spawn_x, spawn_y, self.facing, damage=20)
+        arrow = Arrow(self, spawn_x, spawn_y, self.facing, damage=20)
         groups['arrows'].add(arrow)
 
     def _spawn_ultimate_beam(self, groups):
@@ -2948,17 +3012,18 @@ class GoblinWarrior(pygame.sprite.Sprite, HealthMixin):
             if abs(real_dist_x) > range_x or abs(real_dist_y) > range_y:
                 if abs(dist_x) > 5:
                     if dist_x < 0:
-                        self.rect.x -= self.speed
+                        self.rect.x -= self.speed*self.get_speed_multiplier()
                         self.facing = -1
                     else:
-                        self.rect.x += self.speed
+                        self.rect.x += self.speed*self.get_speed_multiplier()
                         self.facing = 1
+                    self.rect.x += int(self.vel.x * self.get_speed_multiplier())
                     moving = True
                 if abs(dist_y) > 5:
                     if dist_y < 0:
-                        self.rect.y -= self.speed
+                        self.rect.y -= self.speed*self.get_speed_multiplier()
                     else:
-                        self.rect.y += self.speed
+                        self.rect.y += self.speed*self.get_speed_multiplier()
                     moving = True
 
                 if random.random() < 0.005:
@@ -3209,17 +3274,18 @@ class GoblinSpearman(pygame.sprite.Sprite, HealthMixin):
 
                 if abs(dist_x) > 5:
                     if dist_x < 0:
-                        self.rect.x -= self.speed
+                        self.rect.x -= self.speed*self.get_speed_multiplier()
                         self.facing = -1
                     else:
-                        self.rect.x += self.speed
+                        self.rect.x += self.speed*self.get_speed_multiplier()
                         self.facing = 1
                     moving = True
+                self.rect.x += int(self.vel.x * self.get_speed_multiplier())
                 if abs(dist_y) > 5:
                     if dist_y < 0:
-                        self.rect.y -= self.speed
+                        self.rect.y -= self.speed*self.get_speed_multiplier()
                     else:
-                        self.rect.y += self.speed
+                        self.rect.y += self.speed*self.get_speed_multiplier()
                     moving = True
 
                 if random.random() < 0.005:
@@ -3549,17 +3615,18 @@ class GoblinTank(pygame.sprite.Sprite, HealthMixin):
                 else:
                     if abs(dist_x) > 5:
                         if dist_x < 0:
-                            self.rect.x -= self.speed
+                            self.rect.x -= self.speed*self.get_speed_multiplier()
                             self.facing = -1
                         else:
-                            self.rect.x += self.speed
+                            self.rect.x += self.speed*self.get_speed_multiplier()
                             self.facing = 1
                         moving = True
+                    self.rect.x += int(self.vel.x * self.get_speed_multiplier())
                     if abs(dist_y) > 5:
                         if dist_y < 0:
-                            self.rect.y -= self.speed
+                            self.rect.y -= self.speed*self.get_speed_multiplier()
                         else:
-                            self.rect.y += self.speed
+                            self.rect.y += self.speed*self.get_speed_multiplier()
                         moving = True
 
                     if random.random() < 0.005:
@@ -3726,8 +3793,8 @@ class FatCultist(pygame.sprite.Sprite, HealthMixin):
             self._update_ai(dt, player, groups)
             self.animator.update(dt)
             
-        self.rect.x += self.vel.x
-        self.rect.y += self.vel.y
+        self.rect.x += self.vel.x*self.get_speed_multiplier()
+        self.rect.y += self.vel.y*self.get_speed_multiplier()
         self._update_visuals()
 
     def _update_ai(self, dt, player, groups):
@@ -3949,8 +4016,8 @@ class DeathBringer(pygame.sprite.Sprite, HealthMixin):
             self._update_ai(dt, player, groups)
             self.animator.update(dt)
             
-        self.rect.x += self.vel.x
-        self.rect.y += self.vel.y
+        self.rect.x += self.vel.x*self.get_speed_multiplier()
+        self.rect.y += self.vel.y*self.get_speed_multiplier()
         self._update_visuals()
 
     def _update_ai(self, dt, player, groups):
@@ -4065,36 +4132,56 @@ class DeathBringer(pygame.sprite.Sprite, HealthMixin):
         self.vel.y = 0
         self.hurt_timer = 0
 
-class HealthPotion(pygame.sprite.Sprite):
-    def __init__(self, x, y, heal_amount=30, lifetime=10000):
+class BasePotion(pygame.sprite.Sprite):
+    def __init__(self, x, y, image_path, fallback_color, lifetime=10000):
         super().__init__()
-        self.heal_amount = heal_amount
         self.lifetime = lifetime
         self.spawn_time = pygame.time.get_ticks()
-
-        # Load image
         try:
-            raw_img = pygame.image.load("assets/items/potions/blue.png").convert_alpha()
-            self.image = pygame.transform.scale(raw_img, (24,24))
+            raw_img = pygame.image.load(image_path).convert_alpha()
+            self.image = pygame.transform.scale(raw_img, (24, 24))
         except Exception:
-            self.image = pygame.Surface((20,24))
-            self.image.fill((50,255,50))
-
-        self.rect = self.image.get_rect(midbottom=(x,y))
+            self.image = pygame.Surface((20, 24))
+            self.image.fill(fallback_color)
+        
+        self.rect = self.image.get_rect(midbottom=(x, y))
         self.base_y = float(self.rect.y)
         self.float_timer = 0
+        self.type = 'base'
 
     @property
     def foot_y(self):
         return self.rect.bottom
     
     def update(self, dt):
-        # Auto destroy
         if pygame.time.get_ticks() - self.spawn_time > self.lifetime:
             self.kill()
             return
-
-        # Floating effects
         self.float_timer += dt * 0.005
         self.rect.y = int(self.base_y + math.sin(self.float_timer) * 5)
+
+# 1. Health Potion
+class HealthPotion(BasePotion):
+    def __init__(self, x, y):
+        super().__init__(x, y, "assets/items/potions/green.png", (255, 50, 50))
+        self.heal_amount = 30
+        self.type = 'health'
+
+# 2. Ice Potion
+class IcePotion(BasePotion):
+    def __init__(self, x, y):
+        super().__init__(x, y, "assets/items/potions/blue.png", (50, 150, 255))
+        self.type = 'slow_buff'
+
+# 3. Fire Potion
+class FirePotion(BasePotion):
+    def __init__(self, x, y):
+        super().__init__(x, y, "assets/items/potions/red.png", (255, 150, 50))
+        self.type = 'burn_buff'
+
+# 4. Poison Potion
+class PoisonPotion(BasePotion):
+    def __init__(self, x, y):
+        super().__init__(x, y, "assets/items/potions/purple.png", (50, 255, 50))
+        self.type = 'poison'
         
