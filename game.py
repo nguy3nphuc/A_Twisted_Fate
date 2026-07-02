@@ -9,7 +9,7 @@ from entities import (Knight, Archer, Lizardman, Cyclop, Kobold, Fireworm, Damag
                        GoblinWarrior, GoblinSpearman, GoblinTank,
                        FatCultist, DeathBringer,
                        DashSmoke, UltimateEffect, KnightUltimateShockwave, BloodVFX, HitVFX,
-                       HealthPotion)
+                       HealthPotion, IcePotion, FirePotion, PoisonPotion)
 
 
 class Game:
@@ -581,7 +581,7 @@ class Game:
         for enemy in self.enemies:
             if enemy.hp <= 0 and not getattr(enemy, 'dropped_potion', False):
                 enemy.dropped_potion = True
-                if random.random() < 0.25:  # 25% tỷ lệ rơi vật phẩm
+                if random.random() < 1:  # 25% tỷ lệ rơi vật phẩm
                     potion_class = random.choice([HealthPotion, IcePotion, FirePotion, PoisonPotion])
                     potion = potion_class(enemy.hurtbox.centerx, enemy.foot_y)
                     self.potions.add(potion)
