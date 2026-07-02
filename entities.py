@@ -4065,3 +4065,36 @@ class DeathBringer(pygame.sprite.Sprite, HealthMixin):
         self.vel.y = 0
         self.hurt_timer = 0
 
+class HealthPotion(pygame.sprite.Sprite):
+    def __init__(self, x, y, heal_amount=30, lifetime=10000):
+        super().__init__()
+        self.heal_amount = heal_amount
+        self.lifetime = lifetime
+        self.spawn_time = pygame.time.get_ticks()
+
+        # Load image
+        try:
+            raw_img = pygame.image.load("assets/items/potions/blue.png").convert_alpha()
+            self.image = pygame.transform.scale(raw_img, (24,24))
+        except Exception:
+            self.image = pygame.Surface((20,24))
+            self.image.fill((50,255,50))
+
+        self.rect = self.image.get_rect(midbottom=(x,y))
+        self.base_y = float(self.rect.y)
+        self.float_timer = 0
+
+    @property
+    def foot_y(self):
+        return self.rect.bottom
+    
+    def update(self, dt):
+        # Auto destroy
+        if pygame.time.get_ticks() - self.spawn_time > self.lifetime:
+            self.kill()
+            return
+
+        # Floating effects
+        self.float_timer += dt * 0.005
+        self.rect.y = int(self.base_y + math.sin(self.float_timer) * 5)
+        

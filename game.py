@@ -8,7 +8,8 @@ from config import (WIDTH, HEIGHT, FPS, MAP_IMAGE, MIN_Y, MAX_Y,
 from entities import (Knight, Archer, Lizardman, Cyclop, Kobold, Fireworm, DamageNumber,
                        GoblinWarrior, GoblinSpearman, GoblinTank,
                        FatCultist, DeathBringer,
-                       DashSmoke, UltimateEffect, KnightUltimateShockwave, BloodVFX, HitVFX)
+                       DashSmoke, UltimateEffect, KnightUltimateShockwave, BloodVFX, HitVFX,
+                       HealthPotion)
 
 
 class Game:
@@ -49,6 +50,7 @@ class Game:
         # sprite groups
         self.all_sprites = pygame.sprite.Group()
         self.enemies = pygame.sprite.Group()
+        self.potions = pygame.sprite.Group()
         self.attacks = pygame.sprite.Group()
         self.arrows = pygame.sprite.Group()
         self.enemy_projectiles = pygame.sprite.Group()
@@ -61,6 +63,7 @@ class Game:
         self.groups = {
             'all': self.all_sprites,
             'enemies': self.enemies,
+            'potions': self.potions,
             'attacks': self.attacks,
             'arrows': self.arrows,
             'enemy_projectiles': self.enemy_projectiles,
@@ -358,6 +361,7 @@ class Game:
         self.damage_numbers.update(dt)
         self.effects.update(dt)
         self.knight_shockwaves.update(dt)
+        self.potions.update(dt)
 
         # Boss spawn logic
         if self.selected_phase == 1 and not self.boss_spawned:
@@ -559,6 +563,23 @@ class Game:
                             hit_effect = HitVFX(player.hurtbox.centerx, player.hurtbox.centery, getattr(player, 'facing', 1), player.foot_y)
                             self.effects.add(hit_effect)
                         proj.kill()
+
+        # 5. Spawn potion
+        for enemy in self.enemies:
+            if enemy.hp <= 0 and not getattr(enemy, 'dropped_potion', False):
+                enemy.dropped_potion = True
+                if random.random() < 1:  # 15% rơi bình máu
+                    potion = HealthPotion(enemy.hurtbox.centerx, enemy.foot_y)
+                    self.potions.add(potion)
+                    self.all_sprites.add(potion)
+
+        # 6. Take potion
+        for player in self.players:
+            if player.hp > 0:
+                for potion in list(self.potions):
+                    if player.hurtbox.colliderect(potion.rect):
+                        player.hp = min(player.max_hp, player.hp + potion.heal_amount)
+                        potion.kill()
 
     def draw(self):
         ox, oy = self.camera_offset
