@@ -4060,6 +4060,20 @@
         352
       ],
       "solid": false
+    },
+    {
+      "texture": "wall",
+      "source": [
+        0,
+        0,
+        32,
+        32
+      ],
+      "position": [
+        800,
+        384
+      ],
+      "solid": false
     }
   ]
 }
