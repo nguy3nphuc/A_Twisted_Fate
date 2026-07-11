@@ -31,7 +31,11 @@ from config import (MIN_Y, MAX_Y, MIN_X, MAX_X,
                      FAT_CULTIST_ATTACK_2_RANGE_X, FAT_CULTIST_ATTACK_2_RANGE_Y,
                      DEATH_BRINGER_ATTACK_RANGE_X, DEATH_BRINGER_ATTACK_RANGE_Y,
                      DEATH_BRINGER_CAST_RANGE_X, DEATH_BRINGER_CAST_RANGE_Y,
-                     DEATH_BRINGER_SPELL_COOLDOWN)
+                     DEATH_BRINGER_SPELL_COOLDOWN,
+                     RESOURCE_DEFAULT_ARMOR_RATIO, RESOURCE_DEFAULT_MANA_RATIO,
+                     RESOURCE_MAX_ARMOR_CAP, RESOURCE_MAX_MANA_CAP,
+                     DEFAULT_ARMOR_REDUCTION_PCT,
+                     PLAYER_RESOURCE_PRESETS, ARCHER_ARROW_CONFIG)
 
 
 def _hurtbox_from_config(anim_config, default_w=40, default_h=80, default_ox=0):
@@ -51,9 +55,22 @@ def _hurtbox_from_config(anim_config, default_w=40, default_h=80, default_ox=0):
 
 
 class HealthMixin:
-    def __init__(self, max_hp):
+    def __init__(self, max_hp, max_armor=None, max_mana=None, armor_reduction_pct=0.25):
         self.max_hp = max_hp
         self.hp = max_hp
+
+        # Shared resource fields for all entities (players + enemies).
+        if max_armor is None:
+            max_armor = max(0, min(RESOURCE_MAX_ARMOR_CAP, int(max_hp * RESOURCE_DEFAULT_ARMOR_RATIO)))
+        if max_mana is None:
+            max_mana = max(0, min(RESOURCE_MAX_MANA_CAP, int(max_hp * RESOURCE_DEFAULT_MANA_RATIO)))
+
+        self.max_armor = int(max_armor)
+        self.armor = float(self.max_armor)
+        self.armor_reduction_pct = max(0.0, min(0.9, float(armor_reduction_pct if armor_reduction_pct is not None else DEFAULT_ARMOR_REDUCTION_PCT)))
+        self.max_mana = int(max_mana)
+        self.mana = float(self.max_mana)
+
         # EnemyHealthBar is defined later in this module but is always available
         # at runtime when enemy instances are created.
         self.health_bar = EnemyHealthBar(max_hp)
@@ -479,7 +496,14 @@ class KnightUltimateShockwave(pygame.sprite.Sprite):
 class Knight(pygame.sprite.Sprite, HealthMixin):
     def __init__(self, pos=(200, 300)):
         pygame.sprite.Sprite.__init__(self)
-        HealthMixin.__init__(self, max_hp=100)
+        _preset = PLAYER_RESOURCE_PRESETS.get('knight', {})
+        HealthMixin.__init__(
+            self,
+            max_hp=1000000000,
+            max_armor=_preset.get('max_armor', 70),
+            max_mana=_preset.get('max_mana', 100),
+            armor_reduction_pct=_preset.get('armor_reduction_pct', 0.40),
+        )
         self.load_assets()
         self.image = self.animator.get_frame()
         self.rect = self.image.get_rect(midbottom=pos)
@@ -515,6 +539,11 @@ class Knight(pygame.sprite.Sprite, HealthMixin):
         self.ultimate_cooldown = 0
         self.ultimate_pressed_last = False
         self._ultimate_shockwave_spawned = False
+        
+        # -- Skills Inventory --
+        self.skills = []  # List of skill types that have been picked up
+        self.active_skill = None  # Currently selected skill (if any)
+        self.target_skill_idx = 0  # Selected skill slot index (0..2)
 
     @property
     def foot_y(self):
@@ -1881,6 +1910,7 @@ class Fireworm(pygame.sprite.Sprite, HealthMixin):
             if self.animator.frame_index == self._fireball_frame and not self.has_attacked:
                 fb = Fireball(self.rect.centerx, self.rect.centery,
                               player.rect.centerx, player.rect.centery)
+                fb.owner = self
                 if 'enemy_projectiles' in groups:
                     groups['enemy_projectiles'].add(fb)
                 self.has_attacked = True
@@ -2041,16 +2071,21 @@ class Fireball(pygame.sprite.Sprite):
 class Arrow(pygame.sprite.Sprite):
     ARROW_SCALE = 2.5  # match the archer's sprite scale
 
-    def __init__(self, x, y, facing, damage=15):
+    def __init__(self, x, y, facing, damage=15, owner=None, arrow_type='normal'):
         super().__init__()
+        self.arrow_type = arrow_type if arrow_type in ARCHER_ARROW_CONFIG else 'normal'
+        arrow_cfg = ARCHER_ARROW_CONFIG[self.arrow_type]
         try:
-            raw = pygame.image.load(ARROW_IMAGE).convert_alpha()
-            aw = int(raw.get_width() * self.ARROW_SCALE)
-            ah = int(raw.get_height() * self.ARROW_SCALE)
+            raw = pygame.image.load(arrow_cfg['path']).convert_alpha()
+            # Magic Arrow artwork has a larger canvas than the standard arrow.
+            # Keep every arrow within the same readable projectile footprint.
+            scale = self.ARROW_SCALE if self.arrow_type == 'normal' else min(1.0, 56 / max(raw.get_width(), raw.get_height()))
+            aw = max(1, int(raw.get_width() * scale))
+            ah = max(1, int(raw.get_height() * scale))
             self.image = pygame.transform.scale(raw, (aw, ah))
         except Exception:
             self.image = pygame.Surface((65, 8))
-            self.image.fill((200, 200, 200))
+            self.image.fill(arrow_cfg.get('hud_color', (200, 200, 200)))
 
         if facing == -1:
             self.image = pygame.transform.flip(self.image, True, False)
@@ -2059,6 +2094,7 @@ class Arrow(pygame.sprite.Sprite):
         self.facing = facing
         self.speed = 20
         self.damage = damage
+        self.owner = owner
 
     @property
     def y(self):
@@ -2438,7 +2474,14 @@ class Archer(pygame.sprite.Sprite, HealthMixin):
 
     def __init__(self, pos=(200, 300)):
         pygame.sprite.Sprite.__init__(self)
-        HealthMixin.__init__(self, max_hp=80)
+        _preset = PLAYER_RESOURCE_PRESETS.get('archer', {})
+        HealthMixin.__init__(
+            self,
+            max_hp=80,
+            max_armor=_preset.get('max_armor', 45),
+            max_mana=_preset.get('max_mana', 120),
+            armor_reduction_pct=_preset.get('armor_reduction_pct', 0.30),
+        )
         self.load_assets()
         self.image = self.animator.get_frame()
         self.rect = self.image.get_rect(midbottom=pos)
@@ -2478,6 +2521,16 @@ class Archer(pygame.sprite.Sprite, HealthMixin):
         self.ultimate_cooldown = 0
         self.ultimate_pressed_last = False
         self._ultimate_beam_spawned = False
+        
+        # -- Skills Inventory --
+        self.skills = []  # List of skill types that have been picked up
+        self.active_skill = None  # Currently selected skill (if any)
+        self.target_skill_idx = 0  # Selected skill slot index (0..2)
+
+        # Magic Arrow selection. Numpad 0 cycles this list during gameplay.
+        self.arrow_types = list(ARCHER_ARROW_CONFIG.keys())
+        self.arrow_type_index = 0
+        self.arrow_type = self.arrow_types[self.arrow_type_index]
 
         # -- Hurtbox --
         _hb_w, _hb_h, _hb_ox = _hurtbox_from_config(
@@ -2757,8 +2810,13 @@ class Archer(pygame.sprite.Sprite, HealthMixin):
     def spawn_arrow(self, groups):
         spawn_y = self.rect.bottom - 6 - self.rect.height // 2
         spawn_x = self.rect.centerx + (20 * self.facing)
-        arrow = Arrow(spawn_x, spawn_y, self.facing, damage=20)
+        arrow_cfg = ARCHER_ARROW_CONFIG.get(self.arrow_type, ARCHER_ARROW_CONFIG['normal'])
+        arrow = Arrow(spawn_x, spawn_y, self.facing, damage=arrow_cfg['damage'], owner=self, arrow_type=self.arrow_type)
         groups['arrows'].add(arrow)
+
+    def cycle_arrow_type(self):
+        self.arrow_type_index = (self.arrow_type_index + 1) % len(self.arrow_types)
+        self.arrow_type = self.arrow_types[self.arrow_type_index]
 
     def _spawn_ultimate_beam(self, groups):
         """Spawn the UltimateEffect beam at the archer's chest position."""
@@ -3152,6 +3210,7 @@ class GoblinSpearman(pygame.sprite.Sprite, HealthMixin):
             # Spawn spear at frame 6
             if self.animator.frame_index == 6 and not self.has_attacked:
                 spear = Spear(self.rect.centerx, self.rect.centery, player.rect.centerx, player.rect.centery)
+                spear.owner = self
                 if 'enemy_projectiles' in groups:
                     groups['enemy_projectiles'].add(spear)
                 self.has_attacked = True
@@ -4097,4 +4156,123 @@ class HealthPotion(pygame.sprite.Sprite):
         # Floating effects
         self.float_timer += dt * 0.005
         self.rect.y = int(self.base_y + math.sin(self.float_timer) * 5)
+
+
+class AbilityVial(pygame.sprite.Sprite):
+    """Green Poison Vial dropped by enemies; grants one ability point."""
+
+    def __init__(self, x, y, lifetime=15000):
+        super().__init__()
+        self.lifetime = lifetime
+        self.spawn_time = pygame.time.get_ticks()
+        try:
+            raw_img = pygame.image.load("assets/items/potions/green.png").convert_alpha()
+            self.image = pygame.transform.scale(raw_img, (26, 26))
+        except Exception:
+            self.image = pygame.Surface((22, 26), pygame.SRCALPHA)
+            self.image.fill((80, 230, 90, 230))
+
+        self.rect = self.image.get_rect(midbottom=(x, y))
+        self.base_y = float(self.rect.y)
+        self.float_timer = 0
+
+    @property
+    def foot_y(self):
+        return self.rect.bottom
+
+    def update(self, dt):
+        if pygame.time.get_ticks() - self.spawn_time > self.lifetime:
+            self.kill()
+            return
+        self.float_timer += dt * 0.005
+        self.rect.y = int(self.base_y + math.sin(self.float_timer) * 7)
+
+
+class BerserkVial(pygame.sprite.Sprite):
+    """Red pickup that temporarily increases damage at an armor cost."""
+
+    def __init__(self, x, y, lifetime=12000):
+        super().__init__()
+        self.lifetime = lifetime
+        self.spawn_time = pygame.time.get_ticks()
+        try:
+            raw_img = pygame.image.load("assets/items/potions/red.png").convert_alpha()
+            self.image = pygame.transform.scale(raw_img, (26, 26))
+        except Exception:
+            self.image = pygame.Surface((22, 26), pygame.SRCALPHA)
+            self.image.fill((245, 75, 65, 230))
+
+        self.rect = self.image.get_rect(midbottom=(x, y))
+        self.base_y = float(self.rect.y)
+        self.float_timer = 0
+
+    @property
+    def foot_y(self):
+        return self.rect.bottom
+
+    def update(self, dt):
+        if pygame.time.get_ticks() - self.spawn_time > self.lifetime:
+            self.kill()
+            return
+        self.float_timer += dt * 0.006
+        self.rect.y = int(self.base_y + math.sin(self.float_timer) * 7)
+
+
+class SkillIcon(pygame.sprite.Sprite):
+    """Skill icon that drops from enemies when they die.
+    Can be picked up by the player to add to their skill inventory."""
+    
+    SKILL_TYPES = {
+        'fire': 'assets/skills/icons/fire.png',
+        'water_ball': 'assets/skills/icons/water_ball.png',
+        'ice': 'assets/skills/icons/water_ball.png',
+        'wind': 'assets/skills/icons/wind.png',
+        'holy': 'assets/skills/icons/holy.png',
+        'light': 'assets/skills/icons/light.png',
+        'dark': 'assets/skills/icons/dark.png',
+        'smoke': 'assets/skills/icons/smoke.png',
+        'wood': 'assets/skills/icons/wood.png',
+        'earth': 'assets/skills/icons/earth.png',
+        'acid': 'assets/skills/icons/acid.png',
+        'shield': 'assets/skills/icons/shield.png',
+        'thunder': 'assets/skills/icons/thunder.png',
+        'water_blast': 'assets/skills/icons/water_blast.png',
+    }
+    
+    def __init__(self, x, y, skill_type='fire', lifetime=15000):
+        super().__init__()
+        if skill_type == 'ice':
+            skill_type = 'water_ball'
+        self.skill_type = skill_type
+        self.lifetime = lifetime
+        self.spawn_time = pygame.time.get_ticks()
+        
+        # Load image
+        try:
+            icon_path = self.SKILL_TYPES.get(skill_type, self.SKILL_TYPES['fire'])
+            raw_img = pygame.image.load(icon_path).convert_alpha()
+            self.image = pygame.transform.scale(raw_img, (32, 32))
+        except Exception:
+            self.image = pygame.Surface((32, 32), pygame.SRCALPHA)
+            self.image.fill((255, 100, 100, 200))
+        
+        self.rect = self.image.get_rect(midbottom=(x, y))
+        self.base_y = float(self.rect.y)
+        self.float_timer = 0
+        self.rotation = 0
+    
+    @property
+    def foot_y(self):
+        return self.rect.bottom
+    
+    def update(self, dt):
+        # Auto destroy
+        if pygame.time.get_ticks() - self.spawn_time > self.lifetime:
+            self.kill()
+            return
+        
+        # Floating and rotation effects
+        self.float_timer += dt * 0.005
+        self.rect.y = int(self.base_y + math.sin(self.float_timer) * 8)
+        self.rotation = (self.rotation + dt * 0.3) % 360
         

@@ -19,7 +19,7 @@ python main.py
 ## Game Features
 
 - **Hero Selection**: Choose between Knight and Archer
-- **3 Phases**: Goblin Invasion, The Menagerie, The Cult
+- **4 Phases**: Goblin Invasion, The Menagerie, The Cult, Pixel Ruins Arena
 - **Combat System**: 
   - 3-hit combo attacks
   - Defense mechanics
@@ -35,6 +35,7 @@ python main.py
 - **1**: Select Knight / Select Phase 1 (Goblin Invasion)
 - **2**: Select Archer / Select Phase 2 (The Menagerie)
 - **3**: Select Phase 3 (The Cult)
+- **4**: Select Phase 4 (Pixel Ruins Arena)
 - **ESC**: Go back
 - **R**: Restart after defeat
 
