@@ -2012,22 +2012,8 @@
         160
       ],
       "position": [
-        165,
+        167,
         344
-      ],
-      "solid": false
-    },
-    {
-      "texture": "plant",
-      "source": [
-        160,
-        0,
-        96,
-        160
-      ],
-      "position": [
-        452,
-        34
       ],
       "solid": false
     },
@@ -2042,20 +2028,6 @@
       "position": [
         601,
         913
-      ],
-      "solid": false
-    },
-    {
-      "texture": "plant",
-      "source": [
-        32,
-        0,
-        96,
-        160
-      ],
-      "position": [
-        764,
-        110
       ],
       "solid": false
     },
@@ -3104,7 +3076,7 @@
         32
       ],
       "position": [
-        728,
+        727,
         336
       ],
       "solid": false
@@ -3650,7 +3622,7 @@
         32
       ],
       "position": [
-        439,
+        445,
         141
       ],
       "solid": false
@@ -3804,8 +3776,8 @@
         32
       ],
       "position": [
-        800,
-        324
+        798,
+        328
       ],
       "solid": false
     },
@@ -4072,6 +4044,62 @@
       "position": [
         800,
         384
+      ],
+      "solid": false
+    },
+    {
+      "texture": "wall",
+      "source": [
+        0,
+        0,
+        32,
+        32
+      ],
+      "position": [
+        384,
+        32
+      ],
+      "solid": false
+    },
+    {
+      "texture": "wall",
+      "source": [
+        0,
+        0,
+        32,
+        32
+      ],
+      "position": [
+        384,
+        128
+      ],
+      "solid": false
+    },
+    {
+      "texture": "plant",
+      "source": [
+        160,
+        0,
+        96,
+        160
+      ],
+      "position": [
+        452,
+        35
+      ],
+      "solid": false
+    },
+    {
+      "texture": "plant",
+      "source": [
+        32,
+        0,
+        96,
+        160
+      ],
+      "position": [
+        765,
+        109
       ],
       "solid": false
     }
