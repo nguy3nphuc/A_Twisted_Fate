@@ -2586,7 +2586,7 @@
         32
       ],
       "position": [
-        624,
+        623,
         676
       ],
       "solid": false
@@ -3427,7 +3427,7 @@
       ],
       "position": [
         606,
-        880
+        878
       ],
       "solid": false
     },
@@ -3455,7 +3455,7 @@
       ],
       "position": [
         719,
-        878
+        879
       ],
       "solid": false
     },
@@ -4100,6 +4100,62 @@
       "position": [
         765,
         109
+      ],
+      "solid": false
+    },
+    {
+      "texture": "wall",
+      "source": [
+        0,
+        0,
+        32,
+        32
+      ],
+      "position": [
+        640,
+        512
+      ],
+      "solid": false
+    },
+    {
+      "texture": "wall",
+      "source": [
+        0,
+        0,
+        32,
+        32
+      ],
+      "position": [
+        640,
+        544
+      ],
+      "solid": false
+    },
+    {
+      "texture": "wall",
+      "source": [
+        0,
+        0,
+        32,
+        32
+      ],
+      "position": [
+        512,
+        704
+      ],
+      "solid": false
+    },
+    {
+      "texture": "wall",
+      "source": [
+        0,
+        0,
+        32,
+        32
+      ],
+      "position": [
+        480,
+        704
       ],
       "solid": false
     }
