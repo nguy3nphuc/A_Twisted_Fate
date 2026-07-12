@@ -9,6 +9,7 @@ PLAYER_SPRITESHEET = "assets/hero/knight/spritesheet.png"
 EFFECT_SPRITESHEET = "assets/effects/effects.png"
 ARCHER_DIR = "assets/hero/archer"
 ARROW_IMAGE = "assets/hero/archer/arrow.png"
+ARCHER_ARROW_HUD_FRAME = "assets/projectiles/single_frame.png"
 
 # Archer Magic Arrows.  Their lower direct damage compensates for utility so
 # no choice is strictly stronger than the standard 20-damage arrow.

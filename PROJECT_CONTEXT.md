@@ -159,7 +159,10 @@ Skill cast có handler riêng trong `Game.use_target_skill()`.
 Archer nhấn `Numpad 0` (hoặc `0`) để đổi Magic Arrow: Normal (damage chuẩn),
 Red/Burn (damage thấp + DOT), Blue/Slow (damage thấp + slow), Purple/Chain
 (damage thấp + lan một mục tiêu gần). Thông số cân bằng nằm trong
-`ARCHER_ARROW_CONFIG` của `config.py`.
+`ARCHER_ARROW_CONFIG` của `config.py`. HUD dùng
+`assets/projectiles/single_frame.png` làm khung, hiển thị icon mũi tên đang chọn.
+Knight và Archer đều có ô Ultimate dưới HUD máu; ô tối dần theo cooldown và
+hiển thị số giây còn lại.
 
 Holy là aura có thời lượng 8 giây sau khi dùng. Thanh vàng `HOLY` bên dưới HUD
 hiển thị thời gian còn lại; thời lượng chỉnh bằng `HOLY_EFFECT_DURATION_MS`.

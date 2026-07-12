@@ -18,7 +18,8 @@ from config import (WIDTH, HEIGHT, FPS, MAP_IMAGE, MIN_Y, MAX_Y,
                      ABILITY_SPEED_BONUS_PER_LEVEL, ARCHER_ARROW_CONFIG,
                      BERSERK_VIAL_DROP_CHANCE, BERSERK_VIAL_DURATION_MS,
                      BERSERK_DAMAGE_MULTIPLIER, BERSERK_ARMOR_EFFECTIVENESS_MULTIPLIER,
-                     HOLY_EFFECT_DURATION_MS)
+                     HOLY_EFFECT_DURATION_MS, ARCHER_ARROW_HUD_FRAME,
+                     KNIGHT_ULTIMATE_COOLDOWN, ARCHER_ULTIMATE_COOLDOWN)
 from entities import (Knight, Archer, Lizardman, Cyclop, Kobold, Fireworm, DamageNumber,
                        GoblinWarrior, GoblinSpearman, GoblinTank,
                        FatCultist, DeathBringer,
@@ -740,6 +741,7 @@ class Game:
             pygame.draw.ellipse(self._shadow_src, (0, 0, 0, 80), self._shadow_src.get_rect())
         self._shadow_cache: dict = {}  # width → scaled surface
         self._skill_icon_cache: dict = {}
+        self._archer_arrow_hud_cache: dict = {}
         self._skill_icon_ratio = 0.5
         self._skill_icon_offset_y = 2
         self._skill_target_ratio = 1.0
@@ -3088,9 +3090,8 @@ class Game:
             offset = 0 if idx == 0 else WIDTH - 240
             self.draw_player_resource_bars(player, offset=offset, label=label)
 
-        # HUD: Knight ultimate cooldown indicator
-        if any(isinstance(player, Knight) and player.hp > 0 for player in self.players):
-            self.draw_knight_ultimate_hud()
+        # HUD: ultimate slots are kept directly under each player's resources.
+        self.draw_player_ultimate_slots()
         self.draw_archer_arrow_hud()
 
         # Boss HP bar
@@ -3285,14 +3286,95 @@ class Game:
         lbl = font_ult.render("ULTIMATE [L]", True, label_color)
         self.screen.blit(lbl, lbl.get_rect(center=(cx, cy + radius + 9)))
 
+    def _get_hud_slot_frame(self, size=48):
+        key = ('frame', size)
+        if key not in self._archer_arrow_hud_cache:
+            try:
+                raw_frame = pygame.image.load(ARCHER_ARROW_HUD_FRAME).convert_alpha()
+                self._archer_arrow_hud_cache[key] = pygame.transform.scale(raw_frame, (size, size))
+            except Exception:
+                fallback = pygame.Surface((size, size), pygame.SRCALPHA)
+                pygame.draw.rect(fallback, (255, 220, 130), fallback.get_rect(), 2)
+                self._archer_arrow_hud_cache[key] = fallback
+        return self._archer_arrow_hud_cache[key]
+
+    def draw_player_ultimate_slots(self):
+        """Draw framed ultimate slots beneath the P1/P2 health HUDs."""
+        slot_size = 48
+        for player in self.players:
+            if isinstance(player, Knight):
+                position = (10, 120)
+                color = (255, 205, 55)
+                cooldown_max = KNIGHT_ULTIMATE_COOLDOWN
+                icon_kind = 'knight'
+            elif isinstance(player, Archer):
+                position = (730, 120)
+                color = (125, 190, 255)
+                cooldown_max = ARCHER_ULTIMATE_COOLDOWN
+                icon_kind = 'archer'
+            else:
+                continue
+
+            cooldown = max(0.0, float(getattr(player, 'ultimate_cooldown', 0)))
+            ratio = max(0.0, min(1.0, cooldown / cooldown_max))
+            slot = self._get_hud_slot_frame(slot_size).copy()
+            centre = (slot_size // 2, slot_size // 2)
+
+            if icon_kind == 'knight':
+                pygame.draw.circle(slot, color, centre, 12)
+                pygame.draw.circle(slot, (255, 245, 170), centre, 7)
+                pygame.draw.line(slot, (145, 85, 20), (centre[0] - 14, centre[1] + 13), (centre[0] + 14, centre[1] - 13), 3)
+            else:
+                pygame.draw.polygon(slot, color, [(10, 30), (25, 10), (21, 23), (38, 17), (23, 38), (27, 26)])
+                pygame.draw.line(slot, (235, 250, 255), (12, 34), (37, 14), 2)
+
+            if cooldown > 0:
+                cover_h = int(slot_size * ratio)
+                shade = pygame.Surface((slot_size, cover_h), pygame.SRCALPHA)
+                shade.fill((0, 0, 0, 155))
+                slot.blit(shade, (0, 0))
+
+            self.screen.blit(slot, position)
+            font = pygame.font.SysFont('Arial', 11, bold=True)
+            label = 'ULT READY' if cooldown <= 0 else f'ULT {cooldown / 1000:.1f}s'
+            self.screen.blit(font.render(label, True, color), (position[0], position[1] + slot_size + 1))
+
     def draw_archer_arrow_hud(self):
         archer = next((player for player in self.players if isinstance(player, Archer)), None)
         if archer is None:
             return
         cfg = ARCHER_ARROW_CONFIG.get(getattr(archer, 'arrow_type', 'normal'), ARCHER_ARROW_CONFIG['normal'])
-        font = pygame.font.SysFont('Arial', 15, bold=True)
-        text = font.render(f"P2 ARROW: {cfg['label']}  [0] Change", True, cfg['hud_color'])
-        self.screen.blit(text, (510, 12))
+        frame_size = 48
+
+        icon_key = ('icon', getattr(archer, 'arrow_type', 'normal'))
+        if icon_key not in self._archer_arrow_hud_cache:
+            try:
+                raw_icon = pygame.image.load(cfg['path']).convert_alpha()
+                visible = raw_icon.get_bounding_rect()
+                if visible.width > 0 and visible.height > 0:
+                    raw_icon = raw_icon.subsurface(visible).copy()
+                max_size = 32
+                scale = min(max_size / raw_icon.get_width(), max_size / raw_icon.get_height())
+                icon_size = (max(1, round(raw_icon.get_width() * scale)), max(1, round(raw_icon.get_height() * scale)))
+                self._archer_arrow_hud_cache[icon_key] = pygame.transform.scale(raw_icon, icon_size)
+            except Exception:
+                fallback = pygame.Surface((26, 8), pygame.SRCALPHA)
+                fallback.fill(cfg['hud_color'])
+                self._archer_arrow_hud_cache[icon_key] = fallback
+
+        # Keep the selected-arrow indicator with P2's health/resource HUD.
+        # This sits below temporary status bars (Berserk/Holy) to avoid overlap.
+        frame_pos = (786, 120)
+        frame = self._get_hud_slot_frame(frame_size)
+        icon = self._archer_arrow_hud_cache[icon_key]
+        self.screen.blit(frame, frame_pos)
+        self.screen.blit(icon, (
+            frame_pos[0] + (frame_size - icon.get_width()) // 2,
+            frame_pos[1] + (frame_size - icon.get_height()) // 2,
+        ))
+        font = pygame.font.SysFont('Arial', 13, bold=True)
+        text = font.render(f"{cfg['label']} [0]", True, cfg['hud_color'])
+        self.screen.blit(text, (838, 137))
 
     def draw_boss_health_bar(self, hp, max_hp, boss_name="BOSS"):
         """Draw a large boss health bar at the bottom of the screen."""
