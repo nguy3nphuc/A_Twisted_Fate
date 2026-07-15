@@ -1,7 +1,7 @@
-"""Interactive 1:1 layout editor for Pixel Ruins.
+"""Interactive editor for Pixel Ruins details, collision, floors and stairs.
 
-Run with ``python pixel_ruins_tuner.py``.  It writes
-``assets/maps/pixel_ruins_layout.json``, which Phase 4 loads automatically.
+Run ``python pixel_ruins_tuner.py``.  Everything is stored in
+``assets/maps/pixel_ruins_layout.json`` and Phase 4 reloads it on entry.
 """
 
 import json
@@ -12,10 +12,31 @@ from pixel_ruins_map import LAYOUT_PATH, OVERVIEW_PATH, TEXTURE_PATHS
 
 
 WINDOW_W, WINDOW_H = 1280, 720
-VIEWPORT = pygame.Rect(12, 48, 960, 640)  # exactly the game's resolution
+VIEWPORT = pygame.Rect(12, 48, 960, 640)
 ATLAS_RECT = pygame.Rect(992, 72, 276, 276)
+ZOOM_OUT_RECT = pygame.Rect(760, 8, 34, 28)
+ZOOM_IN_RECT = pygame.Rect(890, 8, 34, 28)
 GRID = 32
 MOVE_SNAP = 2
+MODES = ('details', 'collision_zones', 'floors', 'stairs', 'tunnels', 'map_boundaries')
+MODE_LABELS = {
+    'details': 'TEXTURE', 'collision_zones': 'COLLIDER',
+    'floors': 'TANG', 'stairs': 'CAU THANG', 'tunnels': 'HAM', 'map_boundaries': 'VIEN MAP',
+}
+MODE_COLORS = {
+    'collision_zones': (245, 80, 80), 'floors': (75, 185, 255),
+    'stairs': (255, 165, 65), 'tunnels': (190, 105, 255), 'map_boundaries': (80, 235, 255),
+}
+TEXTURE_OUTLINE_COLORS = {
+    'struct': (80, 210, 255),
+    'props': (255, 180, 70),
+    'plant': (80, 235, 120),
+    'player': (255, 100, 220),
+    'shadow_plant': (175, 120, 255),
+    'grass': (160, 240, 80),
+    'stone_ground': (210, 210, 225),
+    'shadow': (130, 150, 185),
+}
 
 
 class PixelRuinsTuner:
@@ -33,29 +54,44 @@ class PixelRuinsTuner:
         self.texture_names = list(self.textures)
         self.texture_index = 0
         self.source = pygame.Rect(0, 0, GRID, GRID)
-        self.atlas_drag_start = None
-        self.map_drag_index = -1
-        self.map_drag_offset = (0, 0)
         self.layout = self._load_layout()
+        self._ensure_layout_shape()
+
+        self.mode = 'details'
         self.selected_index = -1
+        self.atlas_drag_start = None
+        self.detail_drag_index = -1
+        self.detail_drag_offset = (0, 0)
+        self.region_drag_index = -1
+        self.region_drag_offset = (0, 0)
+        self.region_create_start = None
+        self.region_preview = None
+        self.line_create_start = None
+        self.line_preview_end = None
+        self.line_drag_index = -1
+        self.line_drag_anchor = None
+        self.line_drag_original = None
         self.show_help = True
         self.exit_confirm = False
         self.dirty = False
-
-        # Camera is expressed in original overview pixels.  It starts on the
-        # same centre crop used by the game, so coordinates match at 1:1.
         self.camera_x = max(0, (self.overview.get_width() - VIEWPORT.width) // 2)
         self.camera_y = max(0, (self.overview.get_height() - VIEWPORT.height) // 2)
+        self.map_zoom = 1.0
 
     def _load_layout(self):
         try:
             with LAYOUT_PATH.open('r', encoding='utf-8') as file:
                 data = json.load(file)
-            if isinstance(data, dict) and isinstance(data.get('details'), list):
-                return data
+            return data if isinstance(data, dict) else {}
         except (OSError, json.JSONDecodeError):
-            pass
-        return {'version': 1, 'details': []}
+            return {}
+
+    def _ensure_layout_shape(self):
+        self.layout['version'] = 2
+        for key in MODES:
+            self.layout.setdefault(key, [])
+            if not isinstance(self.layout[key], list):
+                self.layout[key] = []
 
     def _save_layout(self):
         LAYOUT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +107,10 @@ class PixelRuinsTuner:
     def selected_texture(self):
         return self.textures[self.selected_texture_name]
 
+    @property
+    def items(self):
+        return self.layout[self.mode]
+
     def _clamp_source(self):
         texture = self.selected_texture
         self.source.width = max(GRID, min(texture.get_width(), self.source.width))
@@ -83,83 +123,179 @@ class PixelRuinsTuner:
         _, _, w, h = detail['source']
         return pygame.Rect(x, y, w, h)
 
+    def _item_rect(self, item):
+        if self.mode == 'details':
+            return self._detail_rect(item)
+        if self.mode == 'map_boundaries':
+            start, end = item['start'], item['end']
+            return pygame.Rect(min(start[0], end[0]) - 6, min(start[1], end[1]) - 6,
+                               abs(end[0] - start[0]) + 12, abs(end[1] - start[1]) + 12)
+        return pygame.Rect(item['rect'])
+
     def _world_from_mouse(self, pos):
-        return (pos[0] - VIEWPORT.x + self.camera_x, pos[1] - VIEWPORT.y + self.camera_y)
+        return ((pos[0] - VIEWPORT.x) / self.map_zoom + self.camera_x,
+                (pos[1] - VIEWPORT.y) / self.map_zoom + self.camera_y)
 
     def _atlas_source_from_mouse(self, pos):
-        """Translate an atlas-preview mouse position into a grid cell."""
         texture = self.selected_texture
         scale = min(ATLAS_RECT.width / texture.get_width(), ATLAS_RECT.height / texture.get_height())
         draw_w, draw_h = round(texture.get_width() * scale), round(texture.get_height() * scale)
         draw_x = ATLAS_RECT.x + (ATLAS_RECT.width - draw_w) // 2
         draw_y = ATLAS_RECT.y + (ATLAS_RECT.height - draw_h) // 2
-        draw_rect = pygame.Rect(draw_x, draw_y, draw_w, draw_h)
-        if not draw_rect.collidepoint(pos):
+        if not pygame.Rect(draw_x, draw_y, draw_w, draw_h).collidepoint(pos):
             return None
-        source_x = int((pos[0] - draw_x) / scale) // GRID * GRID
-        source_y = int((pos[1] - draw_y) / scale) // GRID * GRID
-        return source_x, source_y
+        return (int((pos[0] - draw_x) / scale) // GRID * GRID,
+                int((pos[1] - draw_y) / scale) // GRID * GRID)
 
     def _place_detail(self, world_pos):
-        x = (world_pos[0] // GRID) * GRID
-        y = (world_pos[1] // GRID) * GRID
-        detail = {
+        self.layout['details'].append({
             'texture': self.selected_texture_name,
             'source': [self.source.x, self.source.y, self.source.width, self.source.height],
-            'position': [x, y],
+            'position': [world_pos[0] // GRID * GRID, world_pos[1] // GRID * GRID],
             'solid': False,
-        }
-        self.layout['details'].append(detail)
-        self.selected_index = len(self.layout['details']) - 1
+        })
+        self.selected_index = len(self.items) - 1
         self.dirty = True
 
-    def _select_detail(self, world_pos):
+    def _new_region(self, rect):
+        if self.mode == 'collision_zones':
+            return {'rect': list(rect)}
+        if self.mode == 'floors':
+            return {'id': self._next_floor_id(), 'name': f'Tang {self._next_floor_id()}', 'rect': list(rect), 'zoom': 1.30}
+        if self.mode == 'tunnels':
+            return {'rect': list(rect)}
+        if self.mode == 'map_boundaries':
+            return {'start': list(rect.topleft), 'end': list(rect.bottomright)}
+        floor_ids = self._floor_ids()
+        return {'rect': list(rect), 'from_floor': floor_ids[0] if floor_ids else 1,
+                'to_floor': floor_ids[1] if len(floor_ids) > 1 else (floor_ids[0] if floor_ids else 2)}
+
+    def _floor_ids(self):
+        return [int(floor.get('id', index + 1)) for index, floor in enumerate(self.layout['floors'])]
+
+    def _next_floor_id(self):
+        return max(self._floor_ids(), default=0) + 1
+
+    def _select_item(self, world_pos):
         self.selected_index = -1
-        for index in range(len(self.layout['details']) - 1, -1, -1):
-            if self._detail_rect(self.layout['details'][index]).collidepoint(world_pos):
+        for index in range(len(self.items) - 1, -1, -1):
+            if self._item_rect(self.items[index]).collidepoint(world_pos):
                 self.selected_index = index
                 return index
         return -1
 
     def _clamp_camera(self):
-        self.camera_x = max(0, min(self.overview.get_width() - VIEWPORT.width, self.camera_x))
-        self.camera_y = max(0, min(self.overview.get_height() - VIEWPORT.height, self.camera_y))
+        view_width = VIEWPORT.width / self.map_zoom
+        view_height = VIEWPORT.height / self.map_zoom
+        self.camera_x = max(0, min(self.overview.get_width() - view_width, self.camera_x))
+        self.camera_y = max(0, min(self.overview.get_height() - view_height, self.camera_y))
+
+    def _minimum_map_zoom(self):
+        """Smallest safe zoom that still fits the viewport inside overview."""
+        return max(0.50, VIEWPORT.width / self.overview.get_width(),
+                   VIEWPORT.height / self.overview.get_height())
+
+    def _change_map_zoom(self, direction):
+        """Zoom the editor around the current viewport centre, not the map."""
+        old_width = VIEWPORT.width / self.map_zoom
+        old_height = VIEWPORT.height / self.map_zoom
+        centre_x = self.camera_x + old_width / 2
+        centre_y = self.camera_y + old_height / 2
+        self.map_zoom = max(self._minimum_map_zoom(), min(3.00, round(self.map_zoom + direction * 0.25, 2)))
+        self.camera_x = centre_x - VIEWPORT.width / self.map_zoom / 2
+        self.camera_y = centre_y - VIEWPORT.height / self.map_zoom / 2
+        self._clamp_camera()
+
+    def _screen_rect(self, world_rect):
+        return pygame.Rect(
+            round(VIEWPORT.x + (world_rect.x - self.camera_x) * self.map_zoom),
+            round(VIEWPORT.y + (world_rect.y - self.camera_y) * self.map_zoom),
+            max(1, round(world_rect.width * self.map_zoom)),
+            max(1, round(world_rect.height * self.map_zoom)),
+        )
+
+    def _switch_mode(self, mode):
+        self.mode = mode
+        self.selected_index = -1
+        self.detail_drag_index = self.region_drag_index = -1
+        self.region_create_start = self.region_preview = None
+        self.line_create_start = self.line_preview_end = None
+        self.line_drag_index = -1
 
     def _move_selected(self, dx, dy):
-        if not (0 <= self.selected_index < len(self.layout['details'])):
+        if not 0 <= self.selected_index < len(self.items):
             return
-        detail = self.layout['details'][self.selected_index]
-        detail['position'][0] += dx
-        detail['position'][1] += dy
+        if self.mode == 'details':
+            self.items[self.selected_index]['position'][0] += dx
+            self.items[self.selected_index]['position'][1] += dy
+        elif self.mode == 'map_boundaries':
+            line = self.items[self.selected_index]
+            for point_name in ('start', 'end'):
+                line[point_name][0] += dx
+                line[point_name][1] += dy
+        else:
+            self.items[self.selected_index]['rect'][0] += dx
+            self.items[self.selected_index]['rect'][1] += dy
+        self.dirty = True
+
+    def _change_floor_zoom(self, direction):
+        if self.mode != 'floors' or not 0 <= self.selected_index < len(self.items):
+            return
+        floor = self.items[self.selected_index]
+        floor['zoom'] = round(max(0.70, min(2.40, float(floor.get('zoom', 1.30)) + direction * .05)), 2)
+        self.dirty = True
+
+    def _change_stair_floor(self, direction, target):
+        if self.mode != 'stairs' or not 0 <= self.selected_index < len(self.items):
+            return
+        ids = self._floor_ids()
+        if not ids:
+            return
+        stair = self.items[self.selected_index]
+        key = 'to_floor' if target else 'from_floor'
+        current = int(stair.get(key, ids[0]))
+        position = ids.index(current) if current in ids else 0
+        stair[key] = ids[(position + direction) % len(ids)]
         self.dirty = True
 
     def _handle_key(self, key, modifiers):
         step = GRID if modifiers & pygame.KMOD_SHIFT else 1
-        if key == pygame.K_s:
+        mode_keys = {pygame.K_1: 'details', pygame.K_2: 'collision_zones', pygame.K_3: 'floors', pygame.K_4: 'stairs', pygame.K_5: 'tunnels', pygame.K_6: 'map_boundaries'}
+        if key in mode_keys:
+            self._switch_mode(mode_keys[key])
+        elif key == pygame.K_s:
             self._save_layout()
+        elif key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+            self._change_map_zoom(-1)
+        # On many keyboards '+' is Shift+'='.  pygame.K_PLUS is not exposed
+        # by every pygame build, so do not reference it here (it can crash the
+        # tuner when any normal key is processed).
+        elif key in (pygame.K_EQUALS, pygame.K_KP_PLUS):
+            self._change_map_zoom(1)
         elif key == pygame.K_h:
             self.show_help = True
-        elif key == pygame.K_LEFTBRACKET:
-            self.texture_index = (self.texture_index - 1) % len(self.texture_names)
-            self._clamp_source()
-        elif key == pygame.K_RIGHTBRACKET:
-            self.texture_index = (self.texture_index + 1) % len(self.texture_names)
-            self._clamp_source()
-        elif key == pygame.K_COMMA:
-            self.source.width -= GRID
-            self.source.height -= GRID
-            self._clamp_source()
-        elif key == pygame.K_PERIOD:
-            self.source.width += GRID
-            self.source.height += GRID
-            self._clamp_source()
-        elif key == pygame.K_DELETE and 0 <= self.selected_index < len(self.layout['details']):
-            del self.layout['details'][self.selected_index]
+        elif key == pygame.K_DELETE and 0 <= self.selected_index < len(self.items):
+            del self.items[self.selected_index]
             self.selected_index = -1
             self.dirty = True
-        elif key == pygame.K_c and 0 <= self.selected_index < len(self.layout['details']):
-            detail = self.layout['details'][self.selected_index]
-            detail['solid'] = not detail.get('solid', False)
+        elif key == pygame.K_LEFTBRACKET:
+            if self.mode == 'details':
+                self.texture_index = (self.texture_index - 1) % len(self.texture_names)
+                self._clamp_source()
+            else:
+                self._change_floor_zoom(-1)
+        elif key == pygame.K_RIGHTBRACKET:
+            if self.mode == 'details':
+                self.texture_index = (self.texture_index + 1) % len(self.texture_names)
+                self._clamp_source()
+            else:
+                self._change_floor_zoom(1)
+        elif key == pygame.K_COMMA:
+            self._change_stair_floor(-1, bool(modifiers & pygame.KMOD_SHIFT))
+        elif key == pygame.K_PERIOD:
+            self._change_stair_floor(1, bool(modifiers & pygame.KMOD_SHIFT))
+        elif key == pygame.K_c and self.mode == 'details' and 0 <= self.selected_index < len(self.items):
+            self.items[self.selected_index]['solid'] = not self.items[self.selected_index].get('solid', False)
             self.dirty = True
         elif key == pygame.K_LEFT:
             self._move_selected(-step, 0)
@@ -170,120 +306,217 @@ class PixelRuinsTuner:
         elif key == pygame.K_DOWN:
             self._move_selected(0, step)
         elif key == pygame.K_j:
-            self.camera_x = max(0, self.camera_x - GRID)
+            self.camera_x -= GRID
         elif key == pygame.K_l:
-            self.camera_x = min(self.overview.get_width() - VIEWPORT.width, self.camera_x + GRID)
+            self.camera_x += GRID
         elif key == pygame.K_i:
-            self.camera_y = max(0, self.camera_y - GRID)
+            self.camera_y -= GRID
         elif key == pygame.K_k:
-            self.camera_y = min(self.overview.get_height() - VIEWPORT.height, self.camera_y + GRID)
+            self.camera_y += GRID
+        self._clamp_camera()
+
+    def _region_rect_from_drag(self, start, end):
+        left, right = sorted((start[0], end[0]))
+        top, bottom = sorted((start[1], end[1]))
+        return pygame.Rect(left, top, max(1, right - left), max(1, bottom - top))
 
     def _handle_mouse(self, event):
         if event.type == pygame.MOUSEWHEEL:
-            if not VIEWPORT.collidepoint(pygame.mouse.get_pos()):
-                return
-            # Wheel pans vertically through the full native-size overview.
-            # Hold Shift to pan horizontally when fine-tuning side areas.
-            if pygame.key.get_mods() & pygame.KMOD_SHIFT:
-                self.camera_x -= event.y * GRID * 2
-            else:
-                self.camera_y -= event.y * GRID * 2
-            self._clamp_camera()
+            if VIEWPORT.collidepoint(pygame.mouse.get_pos()):
+                if pygame.key.get_mods() & pygame.KMOD_SHIFT:
+                    self.camera_x -= event.y * GRID * 2
+                else:
+                    self.camera_y -= event.y * GRID * 2
+                self._clamp_camera()
             return
 
-        if event.type == pygame.MOUSEMOTION and self.atlas_drag_start is not None and event.buttons[0]:
+        if event.type == pygame.MOUSEMOTION and self.atlas_drag_start and event.buttons[0]:
             end = self._atlas_source_from_mouse(event.pos)
-            if end is not None:
-                start_x, start_y = self.atlas_drag_start
-                end_x, end_y = end
-                self.source.x = min(start_x, end_x)
-                self.source.y = min(start_y, end_y)
-                self.source.width = abs(end_x - start_x) + GRID
-                self.source.height = abs(end_y - start_y) + GRID
+            if end:
+                sx, sy = self.atlas_drag_start
+                self.source = pygame.Rect(min(sx, end[0]), min(sy, end[1]), abs(end[0] - sx) + GRID, abs(end[1] - sy) + GRID)
                 self._clamp_source()
             return
 
-        if event.type == pygame.MOUSEMOTION and self.map_drag_index >= 0 and event.buttons[0]:
-            if VIEWPORT.collidepoint(event.pos):
-                world_x, world_y = self._world_from_mouse(event.pos)
-                offset_x, offset_y = self.map_drag_offset
-                detail = self.layout['details'][self.map_drag_index]
-                # Detail placement needs fine alignment with the painted map,
-                # unlike atlas crops which stay on a 32px tile grid.
-                snap = 1 if pygame.key.get_mods() & pygame.KMOD_CTRL else MOVE_SNAP
-                detail['position'][0] = round((world_x - offset_x) / snap) * snap
-                detail['position'][1] = round((world_y - offset_y) / snap) * snap
-                self.dirty = True
+        if event.type == pygame.MOUSEMOTION and self.detail_drag_index >= 0 and event.buttons[0]:
+            wx, wy = self._world_from_mouse(event.pos)
+            snap = 1 if pygame.key.get_mods() & pygame.KMOD_CTRL else MOVE_SNAP
+            detail = self.layout['details'][self.detail_drag_index]
+            detail['position'] = [round((wx - self.detail_drag_offset[0]) / snap) * snap, round((wy - self.detail_drag_offset[1]) / snap) * snap]
+            self.dirty = True
+            return
+
+        if event.type == pygame.MOUSEMOTION and self.region_drag_index >= 0 and event.buttons[0]:
+            wx, wy = self._world_from_mouse(event.pos)
+            snap = 1 if pygame.key.get_mods() & pygame.KMOD_CTRL else MOVE_SNAP
+            rect = self.items[self.region_drag_index]['rect']
+            rect[0] = round((wx - self.region_drag_offset[0]) / snap) * snap
+            rect[1] = round((wy - self.region_drag_offset[1]) / snap) * snap
+            self.dirty = True
+            return
+
+        if event.type == pygame.MOUSEMOTION and self.region_create_start and event.buttons[0]:
+            self.region_preview = self._region_rect_from_drag(self.region_create_start, self._world_from_mouse(event.pos))
+            return
+
+        if event.type == pygame.MOUSEMOTION and self.line_create_start and event.buttons[0]:
+            self.line_preview_end = self._world_from_mouse(event.pos)
+            return
+
+        if event.type == pygame.MOUSEMOTION and self.line_drag_index >= 0 and event.buttons[0]:
+            world = self._world_from_mouse(event.pos)
+            dx, dy = round(world[0] - self.line_drag_anchor[0]), round(world[1] - self.line_drag_anchor[1])
+            item = self.items[self.line_drag_index]
+            item['start'] = [self.line_drag_original[0][0] + dx, self.line_drag_original[0][1] + dy]
+            item['end'] = [self.line_drag_original[1][0] + dx, self.line_drag_original[1][1] + dy]
+            self.dirty = True
             return
 
         if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self.line_create_start and self.line_preview_end:
+                start = self.line_create_start
+                end = self.line_preview_end
+                if round(start[0]) != round(end[0]) or round(start[1]) != round(end[1]):
+                    self.items.append({'start': [round(start[0]), round(start[1])], 'end': [round(end[0]), round(end[1])]})
+                    self.selected_index = len(self.items) - 1
+                    self.dirty = True
+            if self.region_create_start and self.region_preview and self.region_preview.width >= 4 and self.region_preview.height >= 4:
+                self.items.append(self._new_region(self.region_preview))
+                self.selected_index = len(self.items) - 1
+                self.dirty = True
             self.atlas_drag_start = None
-            self.map_drag_index = -1
+            self.detail_drag_index = self.region_drag_index = self.line_drag_index = -1
+            self.region_create_start = self.region_preview = None
+            self.line_create_start = self.line_preview_end = None
             return
 
         if event.type != pygame.MOUSEBUTTONDOWN:
             return
-        if ATLAS_RECT.collidepoint(event.pos) and event.button == 1:
-            source_pos = self._atlas_source_from_mouse(event.pos)
-            if source_pos is not None:
-                self.atlas_drag_start = source_pos
-                self.source.x, self.source.y = source_pos
-                self.source.width = GRID
-                self.source.height = GRID
-                self._clamp_source()
+        if event.button == 1 and ZOOM_OUT_RECT.collidepoint(event.pos):
+            self._change_map_zoom(-1)
             return
-        if VIEWPORT.collidepoint(event.pos):
-            world_pos = self._world_from_mouse(event.pos)
-            if event.button == 1:
-                # Drag an existing detail. Ctrl+click always places a new one,
-                # even when the click lands on an existing texture.
-                index = -1 if pygame.key.get_mods() & pygame.KMOD_CTRL else self._select_detail(world_pos)
-                if index >= 0:
-                    self.map_drag_index = index
-                    detail_x, detail_y = self.layout['details'][index]['position']
-                    self.map_drag_offset = (world_pos[0] - detail_x, world_pos[1] - detail_y)
-                else:
-                    self._place_detail(world_pos)
-            elif event.button == 3:
-                self._select_detail(world_pos)
+        if event.button == 1 and ZOOM_IN_RECT.collidepoint(event.pos):
+            self._change_map_zoom(1)
+            return
+        if self.mode == 'details' and ATLAS_RECT.collidepoint(event.pos) and event.button == 1:
+            source = self._atlas_source_from_mouse(event.pos)
+            if source:
+                self.atlas_drag_start = source
+                self.source = pygame.Rect(*source, GRID, GRID)
+            return
+        if not VIEWPORT.collidepoint(event.pos):
+            return
+        world = self._world_from_mouse(event.pos)
+        if event.button == 3:
+            self._select_item(world)
+            return
+        if event.button != 1:
+            return
+        index = -1 if pygame.key.get_mods() & pygame.KMOD_CTRL else self._select_item(world)
+        if self.mode == 'map_boundaries':
+            if index >= 0:
+                self.line_drag_index = index
+                self.line_drag_anchor = world
+                item = self.items[index]
+                self.line_drag_original = (list(item['start']), list(item['end']))
+            else:
+                self.line_create_start = world
+                self.line_preview_end = world
+            return
+        if self.mode == 'details':
+            if index >= 0:
+                self.detail_drag_index = index
+                x, y = self.items[index]['position']
+                self.detail_drag_offset = world[0] - x, world[1] - y
+            else:
+                self._place_detail(world)
+        elif index >= 0:
+            self.region_drag_index = index
+            rect = self.items[index]['rect']
+            self.region_drag_offset = world[0] - rect[0], world[1] - rect[1]
+        else:
+            self.region_create_start = world
+            self.region_preview = pygame.Rect(world, (1, 1))
 
     def _draw_text(self, text, x, y, color=(235, 235, 235), small=False):
-        font = self.small_font if small else self.font
-        self.screen.blit(font.render(text, True, color), (x, y))
+        self.screen.blit((self.small_font if small else self.font).render(text, True, color), (x, y))
 
     def _draw_modal(self, title, lines, accent=(255, 225, 130)):
         overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 185))
         self.screen.blit(overlay, (0, 0))
-        panel = pygame.Rect(210, 115, 860, 480)
+        panel = pygame.Rect(160, 88, 960, 545)
         pygame.draw.rect(self.screen, (30, 36, 46), panel, border_radius=10)
         pygame.draw.rect(self.screen, accent, panel, 2, border_radius=10)
-        title_surface = pygame.font.SysFont('Arial', 30, bold=True).render(title, True, accent)
-        self.screen.blit(title_surface, title_surface.get_rect(center=(panel.centerx, panel.y + 52)))
-        line_font = pygame.font.SysFont('Arial', 19)
+        title_surface = pygame.font.SysFont('Arial', 29, bold=True).render(title, True, accent)
+        self.screen.blit(title_surface, title_surface.get_rect(center=(panel.centerx, panel.y + 46)))
+        font = pygame.font.SysFont('Arial', 18)
         for index, line in enumerate(lines):
-            text = line_font.render(line, True, (235, 240, 245))
-            self.screen.blit(text, text.get_rect(center=(panel.centerx, panel.y + 112 + index * 34)))
+            text = font.render(line, True, (235, 240, 245))
+            self.screen.blit(text, text.get_rect(center=(panel.centerx, panel.y + 95 + index * 31)))
+
+    def _draw_region(self, item, color, index):
+        rect = self._screen_rect(pygame.Rect(item['rect']))
+        overlay = pygame.Surface(rect.size, pygame.SRCALPHA)
+        overlay.fill((*color, 42))
+        self.screen.blit(overlay, rect.topleft)
+        pygame.draw.rect(self.screen, color, rect, 2 if index == self.selected_index else 1)
+        if self.mode == 'floors':
+            self._draw_text(f"{item.get('name', 'Tang')} z:{float(item.get('zoom', 1.3)):.2f}", rect.x + 3, rect.y + 3, color, True)
+        elif self.mode == 'stairs':
+            self._draw_text(f"{item.get('from_floor', 1)} -> {item.get('to_floor', 2)}", rect.x + 3, rect.y + 3, color, True)
+
+    def _draw_boundary_line(self, item, index):
+        start, end = item['start'], item['end']
+        start_screen = (round(VIEWPORT.x + (start[0] - self.camera_x) * self.map_zoom), round(VIEWPORT.y + (start[1] - self.camera_y) * self.map_zoom))
+        end_screen = (round(VIEWPORT.x + (end[0] - self.camera_x) * self.map_zoom), round(VIEWPORT.y + (end[1] - self.camera_y) * self.map_zoom))
+        width = 5 if index == self.selected_index else 3
+        pygame.draw.line(self.screen, MODE_COLORS['map_boundaries'], start_screen, end_screen, width)
+        pygame.draw.circle(self.screen, (245, 255, 255), start_screen, 3)
+        pygame.draw.circle(self.screen, (245, 255, 255), end_screen, 3)
 
     def draw(self):
         self.screen.fill((30, 32, 38))
-        self._draw_text('PIXEL RUINS TUNER — native 1:1 pixels', 12, 12, (255, 225, 130))
-
-        crop = pygame.Rect(self.camera_x, self.camera_y, VIEWPORT.width, VIEWPORT.height)
-        self.screen.blit(self.overview, VIEWPORT.topleft, crop)
+        self._draw_text(f'PIXEL RUINS TUNER — {MODE_LABELS[self.mode]}', 12, 12, MODE_COLORS.get(self.mode, (255, 225, 130)))
+        self._draw_text(f'Texture dang chon: {self.selected_texture_name}', 430, 14, (160, 225, 255), True)
+        self._draw_text('ZOOM', 705, 14, (255, 225, 130), True)
+        pygame.draw.rect(self.screen, (65, 75, 90), ZOOM_OUT_RECT, border_radius=4)
+        pygame.draw.rect(self.screen, (65, 75, 90), ZOOM_IN_RECT, border_radius=4)
+        self._draw_text('-', ZOOM_OUT_RECT.x + 12, ZOOM_OUT_RECT.y + 5, (255, 255, 255))
+        self._draw_text('+', ZOOM_IN_RECT.x + 10, ZOOM_IN_RECT.y + 5, (255, 255, 255))
+        self._draw_text(f'{self.map_zoom:.2f}x', 800, 14, (255, 225, 130), True)
+        # Rounding at the map edge can otherwise make a source crop one pixel
+        # too large. Build a crop that is always guaranteed to be inside it.
+        crop_width = min(self.overview.get_width(), max(1, round(VIEWPORT.width / self.map_zoom)))
+        crop_height = min(self.overview.get_height(), max(1, round(VIEWPORT.height / self.map_zoom)))
+        crop = pygame.Rect(
+            max(0, min(self.overview.get_width() - crop_width, round(self.camera_x))),
+            max(0, min(self.overview.get_height() - crop_height, round(self.camera_y))),
+            crop_width, crop_height,
+        )
+        map_view = pygame.transform.scale(self.overview.subsurface(crop), VIEWPORT.size)
+        self.screen.blit(map_view, VIEWPORT.topleft)
         for index, detail in enumerate(self.layout['details']):
             texture = self.textures.get(detail.get('texture'))
-            if texture is None:
-                continue
-            source = pygame.Rect(detail['source'])
-            world_x, world_y = detail['position']
-            screen_pos = (VIEWPORT.x + world_x - self.camera_x, VIEWPORT.y + world_y - self.camera_y)
-            self.screen.blit(texture, screen_pos, source)
-            rect = pygame.Rect(screen_pos, source.size)
-            if detail.get('solid', False):
-                pygame.draw.rect(self.screen, (0, 220, 255), rect, 1)
-            if index == self.selected_index:
-                pygame.draw.rect(self.screen, (255, 225, 70), rect, 2)
+            if texture:
+                source = pygame.Rect(detail['source'])
+                rect = self._screen_rect(pygame.Rect(detail['position'], source.size))
+                self.screen.blit(pygame.transform.scale(texture.subsurface(source), rect.size), rect.topleft)
+                if self.mode == 'details':
+                    color = TEXTURE_OUTLINE_COLORS.get(detail.get('texture'), (245, 245, 245))
+                    width = 2 if index == self.selected_index else 1
+                    pygame.draw.rect(self.screen, color, rect, width)
+        if self.mode != 'details':
+            if self.mode == 'map_boundaries':
+                for index, item in enumerate(self.items):
+                    self._draw_boundary_line(item, index)
+                if self.line_create_start and self.line_preview_end:
+                    self._draw_boundary_line({'start': self.line_create_start, 'end': self.line_preview_end}, -2)
+            else:
+                for index, item in enumerate(self.items):
+                    self._draw_region(item, MODE_COLORS[self.mode], index)
+                if self.region_preview:
+                    self._draw_region({'rect': list(self.region_preview)}, MODE_COLORS[self.mode], -2)
         pygame.draw.rect(self.screen, (240, 240, 240), VIEWPORT, 1)
 
         texture = self.selected_texture
@@ -291,44 +524,42 @@ class PixelRuinsTuner:
         preview = pygame.transform.scale(texture, (round(texture.get_width() * scale), round(texture.get_height() * scale)))
         preview_rect = preview.get_rect(center=ATLAS_RECT.center)
         self.screen.blit(preview, preview_rect)
-        selection = pygame.Rect(
-            preview_rect.x + round(self.source.x * scale), preview_rect.y + round(self.source.y * scale),
-            max(1, round(self.source.width * scale)), max(1, round(self.source.height * scale)),
-        )
-        pygame.draw.rect(self.screen, (255, 225, 70), selection, 2)
+        select = pygame.Rect(preview_rect.x + round(self.source.x * scale), preview_rect.y + round(self.source.y * scale), max(1, round(self.source.width * scale)), max(1, round(self.source.height * scale)))
+        pygame.draw.rect(self.screen, (255, 225, 70), select, 2)
         pygame.draw.rect(self.screen, (220, 220, 220), ATLAS_RECT, 1)
-
-        self._draw_text(f'Texture: {self.selected_texture_name}  [ / ] change', 992, 362, (160, 225, 255))
-        self._draw_text(f'Source: {list(self.source)}', 992, 388, small=True)
-        self._draw_text('Drag atlas: select any large texture region', 992, 408, small=True)
-        self._draw_text('[,/.]: shrink/grow selected crop by 32px', 992, 428, small=True)
-        self._draw_text('L-drag detail: 2px move | Ctrl: 1px move', 992, 452, small=True)
-        self._draw_text('Ctrl+L-click: place over detail | R-click: select', 992, 472, small=True)
-        self._draw_text('Arrows: move selected | Shift: 32px', 992, 492, small=True)
-        self._draw_text('C: toggle wall | Delete: remove | S: save', 992, 512, small=True)
-        self._draw_text('Wheel: scroll map | Shift+Wheel: horizontal', 992, 532, small=True)
-        self._draw_text(f'Details: {len(self.layout["details"])} | Selected: {self.selected_index}', 992, 552, (255, 225, 130), small=True)
+        info = [
+            '1 Texture | 2 Collider | 3 Tang | 4 Cau thang | 5 Ham | 6 Vien map',
+            'Keo chuot o map: tao vung/line | keo doi tuong: di chuyen',
+            'Ctrl khi keo: chinh 1px | mac dinh: 2px',
+            'R-click: chon | Delete: xoa | S: luu | H: huong dan',
+            'Zoom: nut -/+ hoac phim -/= | Wheel: cuon map',
+        ]
+        if self.mode == 'details':
+            info += ['[ / ]: doi texture | Keo atlas: chon crop | Ctrl+click: dat moi',
+                     'Khung mau: struct xanh | props cam | plant xanh la | player hong | shadow tim']
+        elif self.mode == 'floors':
+            info += ['[ / ]: zoom tang -/+ 0.05']
+        elif self.mode == 'stairs':
+            info += [', / .: doi tang di | Shift+, / Shift+.: doi tang den']
+        for index, line in enumerate(info):
+            self._draw_text(line, 992, 365 + index * 21, (185, 225, 235), True)
         status = 'CHUA LUU' if self.dirty else 'DA LUU'
-        status_color = (255, 130, 100) if self.dirty else (130, 235, 160)
-        self._draw_text(f'Camera: {self.camera_x}, {self.camera_y} | {status}', 992, 574, status_color, small=True)
-
+        self._draw_text(f'{MODE_LABELS[self.mode]}: {len(self.items)} | Chon: {self.selected_index} | {status}', 992, 535, (255, 140, 100) if self.dirty else (130, 235, 160), True)
+        self._draw_text(f'Camera: {self.camera_x}, {self.camera_y}', 992, 556, (255, 225, 130), True)
         if self.show_help:
-            self._draw_modal('HUONG DAN PIXEL RUINS TUNER', [
-                '1. Dung [ / ] de chon texture atlas.',
-                '2. Keo chuot tren atlas ben phai de chon vung texture lon.',
-                '3. Click trai map de dat texture; keo detail de di chuyen.',
-                '4. C bat/tat collider tuong; mau cyan la collider.',
-                '5. Lan chuot de xem map day du; Shift + lan de di ngang.',
-                '6. Nhan S de luu pixel_ruins_layout.json.',
-                'Nhan Enter, H, Esc hoac click de bat dau.',
+            self._draw_modal('HUONG DAN TUNER MAP', [
+                '1: dat texture trang tri (khong tu tao va cham).',
+                '2: keo vung DO de ve collider, nhan vat khong the di vao.',
+                '3: keo vung XANH de danh dau tung tang; [ ] chinh zoom cua tang.',
+                '4: keo vung CAM de danh dau cau thang va gan tang di/den.',
+                '5: keo vung TIM phu len loi ham de khoet collider va cho phep di qua.',
+                '6: keo tung line CYAN lam vien map; nhan vat khong the cat qua line.',
+                'Keo o vung trong de tao. Keo vung da co de di chuyen. Ctrl = 1 pixel.',
+                'Nhan S de luu JSON. Khi thoat, tuner se nhac ban luu.',
+                'Enter, H, Esc hoac click de bat dau.',
             ])
         elif self.exit_confirm:
-            self._draw_modal('LUU LAYOUT TRUOC KHI THOAT?', [
-                'S: Luu JSON va thoat.',
-                'D: Thoat khong luu.',
-                'Esc: Quay lai tuner.',
-                'Trang thai hien tai: ' + ('co thay doi chua luu.' if self.dirty else 'da luu.'),
-            ], (255, 170, 110))
+            self._draw_modal('LUU LAYOUT TRUOC KHI THOAT?', ['S: Luu JSON va thoat.', 'D: Thoat khong luu.', 'Esc: Quay lai tuner.'], (255, 170, 110))
         pygame.display.flip()
 
     def run(self):
@@ -346,8 +577,7 @@ class PixelRuinsTuner:
                 elif self.exit_confirm:
                     if event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_s:
-                            self._save_layout()
-                            self.running = False
+                            self._save_layout(); self.running = False
                         elif event.key == pygame.K_d:
                             self.running = False
                         elif event.key == pygame.K_ESCAPE:

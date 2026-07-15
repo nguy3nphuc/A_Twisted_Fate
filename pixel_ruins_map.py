@@ -20,6 +20,8 @@ TEXTURE_PATHS = {
     'struct': MAP_DIR / "Texture" / "TX Struct.png",
     'props': MAP_DIR / "Texture" / "TX Props.png",
     'plant': MAP_DIR / "Texture" / "TX Plant.png",
+    'player': MAP_DIR / "Texture" / "TX Player.png",
+    'shadow_plant': MAP_DIR / "Texture" / "TX Shadow Plant.png",
     'grass': MAP_DIR / "Texture" / "TX Tileset Grass.png",
     'stone_ground': MAP_DIR / "Texture" / "TX Tileset Stone Ground.png",
     'shadow': MAP_DIR / "Texture" / "TX Shadow.png",
@@ -30,13 +32,22 @@ class PixelRuinsMap:
     """Render the overview at 1:1 and overlay JSON-authored texture details."""
 
     def __init__(self, width: int, height: int):
+        # width/height are kept for API compatibility with Game, while the
+        # playable surface itself uses the full native overview dimensions.
         self.width = width
         self.height = height
-        self.surface = pygame.Surface((width, height)).convert()
         self.wall_rects: list[pygame.Rect] = []
         self._textures = self._load_textures()
-        self._overview, self.world_offset = self._load_overview()
+        self.world_surface = self._load_overview()
+        self.surface = self.world_surface
         self.layout = self._load_layout()
+        self.collision_zones = self._rectangles_from_layout('collision_zones')
+        self.tunnels = self._rectangles_from_layout('tunnels')
+        self.map_boundaries = self._lines_from_layout('map_boundaries')
+        self.floors = self._regions_from_layout('floors')
+        self.stairs = self._regions_from_layout('stairs')
+        self.wall_rects.extend(self._cut_tunnels_from_colliders(self.collision_zones, self.tunnels))
+        self.wall_rects.extend(self._line_collision_rects(self.map_boundaries))
         self._draw()
 
     def _load_textures(self):
@@ -54,10 +65,9 @@ class PixelRuinsMap:
         except Exception:
             overview = pygame.Surface((self.width, self.height))
             overview.fill((45, 55, 45))
-        # Native pixels only: this crops the larger overview around its centre.
-        offset = ((self.width - overview.get_width()) // 2,
-                  (self.height - overview.get_height()) // 2)
-        return overview, offset
+        # Keep every overview/detail pixel at native 1:1 size.  Game draws a
+        # moving 960x640 viewport over this full surface.
+        return overview
 
     def _load_layout(self):
         try:
@@ -68,8 +78,6 @@ class PixelRuinsMap:
             return {'details': []}
 
     def _draw(self):
-        self.surface.blit(self._overview, self.world_offset)
-        ox, oy = self.world_offset
         for detail in self.layout.get('details', []):
             texture = self._textures.get(detail.get('texture'))
             source_data = detail.get('source', [])
@@ -81,12 +89,93 @@ class PixelRuinsMap:
                 continue
             if source.left < 0 or source.top < 0 or source.right > texture.get_width() or source.bottom > texture.get_height():
                 continue
-            screen_pos = (ox + int(position[0]), oy + int(position[1]))
-            self.surface.blit(texture, screen_pos, source)
+            world_pos = (int(position[0]), int(position[1]))
+            self.surface.blit(texture, world_pos, source)
 
-            if detail.get('solid', False):
-                collider_data = detail.get('collider', [0, source.height // 3, source.width, source.height - source.height // 3])
-                if len(collider_data) == 4:
-                    cx, cy, cw, ch = (int(value) for value in collider_data)
-                    if cw > 0 and ch > 0:
-                        self.wall_rects.append(pygame.Rect(screen_pos[0] + cx, screen_pos[1] + cy, cw, ch))
+    def _rectangles_from_layout(self, key):
+        """Read only explicit tuner-authored rectangles as collision zones."""
+        rectangles = []
+        for zone in self.layout.get(key, []):
+            rect_data = zone.get('rect', []) if isinstance(zone, dict) else zone
+            if not isinstance(rect_data, list) or len(rect_data) != 4:
+                continue
+            rect = pygame.Rect(*(int(value) for value in rect_data))
+            if rect.width > 0 and rect.height > 0:
+                rectangles.append(rect)
+        return rectangles
+
+    def _regions_from_layout(self, key):
+        regions = []
+        for index, region in enumerate(self.layout.get(key, [])):
+            if not isinstance(region, dict):
+                continue
+            rect_data = region.get('rect', [])
+            if not isinstance(rect_data, list) or len(rect_data) != 4:
+                continue
+            rect = pygame.Rect(*(int(value) for value in rect_data))
+            if rect.width <= 0 or rect.height <= 0:
+                continue
+            copy = dict(region)
+            copy['rect'] = rect
+            copy.setdefault('id', index + 1)
+            regions.append(copy)
+        return regions
+
+    def _lines_from_layout(self, key):
+        lines = []
+        for line in self.layout.get(key, []):
+            if not isinstance(line, dict):
+                continue
+            start, end = line.get('start', []), line.get('end', [])
+            if not (isinstance(start, list) and isinstance(end, list) and len(start) == len(end) == 2):
+                continue
+            start = (int(start[0]), int(start[1]))
+            end = (int(end[0]), int(end[1]))
+            if start != end:
+                lines.append((start, end))
+        return lines
+
+    @staticmethod
+    def _line_collision_rects(lines, thickness=8):
+        """Approximate arbitrary boundary lines with overlapping small blocks."""
+        rectangles = []
+        half = thickness // 2
+        for start, end in lines:
+            dx, dy = end[0] - start[0], end[1] - start[1]
+            steps = max(1, int(max(abs(dx), abs(dy)) / 3))
+            for step in range(steps + 1):
+                ratio = step / steps
+                x = round(start[0] + dx * ratio)
+                y = round(start[1] + dy * ratio)
+                rectangles.append(pygame.Rect(x - half, y - half, thickness, thickness))
+        return rectangles
+
+    @staticmethod
+    def _cut_tunnels_from_colliders(colliders, tunnels):
+        """Subtract every tunnel area from authored collision rectangles."""
+        remaining = list(colliders)
+        for tunnel in tunnels:
+            next_remaining = []
+            for collider in remaining:
+                overlap = collider.clip(tunnel)
+                if not overlap:
+                    next_remaining.append(collider)
+                    continue
+                # Four rectangles cover everything around the removed centre.
+                candidates = (
+                    pygame.Rect(collider.left, collider.top, collider.width, overlap.top - collider.top),
+                    pygame.Rect(collider.left, overlap.bottom, collider.width, collider.bottom - overlap.bottom),
+                    pygame.Rect(collider.left, overlap.top, overlap.left - collider.left, overlap.height),
+                    pygame.Rect(overlap.right, overlap.top, collider.right - overlap.right, overlap.height),
+                )
+                next_remaining.extend(rect for rect in candidates if rect.width > 0 and rect.height > 0)
+            remaining = next_remaining
+        return remaining
+
+    def floor_at(self, world_position):
+        """Return the last matching floor so smaller overlay zones win."""
+        floor = None
+        for candidate in self.floors:
+            if candidate['rect'].collidepoint(world_position):
+                floor = candidate
+        return floor

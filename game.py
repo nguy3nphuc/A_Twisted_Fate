@@ -4,6 +4,8 @@ import math
 import random
 import os
 import json
+import config as config_module
+import entities as entities_module
 from types import SimpleNamespace
 from pixel_ruins_map import PixelRuinsMap
 from config import (WIDTH, HEIGHT, FPS, MAP_IMAGE, MIN_Y, MAX_Y,
@@ -18,7 +20,8 @@ from config import (WIDTH, HEIGHT, FPS, MAP_IMAGE, MIN_Y, MAX_Y,
                      ABILITY_SPEED_BONUS_PER_LEVEL, ARCHER_ARROW_CONFIG,
                      BERSERK_VIAL_DROP_CHANCE, BERSERK_VIAL_DURATION_MS,
                      BERSERK_DAMAGE_MULTIPLIER, BERSERK_ARMOR_EFFECTIVENESS_MULTIPLIER,
-                     HOLY_EFFECT_DURATION_MS)
+                     HOLY_EFFECT_DURATION_MS, PIXEL_RUINS_CAMERA_ZOOM,
+                     PIXEL_RUINS_ENTITY_SCALE, PIXEL_RUINS_TUNNEL_ENTITY_ALPHA)
 from entities import (Knight, Archer, Lizardman, Cyclop, Kobold, Fireworm, DamageNumber,
                        GoblinWarrior, GoblinSpearman, GoblinTank,
                        FatCultist, DeathBringer,
@@ -1790,20 +1793,45 @@ class Game:
             if self.selected_phase == 4:
                 self.pixel_ruins_map = PixelRuinsMap(WIDTH, HEIGHT)
                 self.map = self.pixel_ruins_map.surface
+                self.world_width, self.world_height = self.map.get_size()
+                self.world_zoom = PIXEL_RUINS_CAMERA_ZOOM
+                self.current_floor = None
+                self.world_render_map = pygame.transform.scale(
+                    self.map,
+                    (round(self.world_width * self.world_zoom), round(self.world_height * self.world_zoom)),
+                )
+                entities_module.MIN_X = 0
+                entities_module.MAX_X = self.world_width
+                entities_module.MIN_Y = 0
+                entities_module.MAX_Y = self.world_height
             else:
                 self.pixel_ruins_map = None
                 loaded_map = pygame.image.load(map_files.get(self.selected_phase, MAP_IMAGE)).convert()
                 self.map = loaded_map
+                self.world_width, self.world_height = WIDTH, HEIGHT
+                self.world_zoom = 1.0
+                self.world_render_map = None
+                entities_module.MIN_X = config_module.MIN_X
+                entities_module.MAX_X = config_module.MAX_X
+                entities_module.MIN_Y = config_module.MIN_Y
+                entities_module.MAX_Y = config_module.MAX_Y
         except Exception as e:
             print(f"Failed to load map for phase {self.selected_phase}: {e}")
             self.map = pygame.Surface((WIDTH, HEIGHT))
             self.map.fill((50, 150, 50))
 
         # Two-player co-op setup
-        self.players = [
-            Knight(pos=(WIDTH//3, HEIGHT-100)),
-            Archer(pos=(2*WIDTH//3, HEIGHT-100)),
-        ]
+        if self.selected_phase == 4:
+            spawn_y = self.world_height // 2 + 100
+            self.players = [
+                Knight(pos=(self.world_width // 2 - 90, spawn_y)),
+                Archer(pos=(self.world_width // 2 + 90, spawn_y)),
+            ]
+        else:
+            self.players = [
+                Knight(pos=(WIDTH//3, HEIGHT-100)),
+                Archer(pos=(2*WIDTH//3, HEIGHT-100)),
+            ]
         self.player = self.players[0]
         for player in self.players:
             self._ensure_player_resources(player)
@@ -1812,6 +1840,8 @@ class Game:
             self.all_sprites.add(player)
 
         self.map_collision_rects = list(getattr(self.pixel_ruins_map, 'wall_rects', []))
+        self.world_camera = pygame.math.Vector2(0, 0)
+        self._update_world_camera()
 
         # spawn timer
         self.spawn_event = pygame.USEREVENT + 1
@@ -1828,19 +1858,122 @@ class Game:
         self.shake_timer = 0
         self.shake_intensity = 0
         self.paused = False
+        # Phase 4 is currently being authored in the map tuner, so keep its
+        # collision view visible by default. F3 can hide it during play.
+        self.DEBUG_DRAW = self.selected_phase == 4
 
     def _resolve_map_collision(self, entity, previous_rect, previous_hurtbox):
-        """Keep an entity out of Phase 4 walls by restoring its last position."""
+        """Keep an entity out of walls while allowing natural wall sliding."""
         if not self.map_collision_rects or not hasattr(entity, 'hurtbox'):
             return
-        if any(entity.hurtbox.colliderect(wall) for wall in self.map_collision_rects):
-            entity.rect = previous_rect
-            entity.hurtbox = previous_hurtbox
+        # A newly tuned layout can be reloaded while an entity is already
+        # inside a marker collider. Do not trap it forever: let it move until
+        # it exits, then apply normal blocking again on later wall entries.
+        if any(previous_hurtbox.colliderect(wall) for wall in self.map_collision_rects):
+            return
+        if not any(entity.hurtbox.colliderect(wall) for wall in self.map_collision_rects):
+            return
+
+        current_rect = entity.rect.copy()
+        current_hurtbox = entity.hurtbox.copy()
+
+        # First cancel horizontal movement only. If this clears the collision,
+        # vertical movement remains, so the entity slides along the wall.
+        entity.rect.x = previous_rect.x
+        entity.hurtbox.x = previous_hurtbox.x
+        if not any(entity.hurtbox.colliderect(wall) for wall in self.map_collision_rects):
+            return
+
+        # Otherwise restore X and cancel vertical movement only.
+        entity.rect = current_rect
+        entity.hurtbox = current_hurtbox
+        entity.rect.y = previous_rect.y
+        entity.hurtbox.y = previous_hurtbox.y
+        if not any(entity.hurtbox.colliderect(wall) for wall in self.map_collision_rects):
+            return
+
+        # Movement entered a closed corner: restore the prior safe position.
+        entity.rect = previous_rect
+        entity.hurtbox = previous_hurtbox
+
+    def _fit_phase4_hurtbox(self, entity):
+        """Match logical collision size to the reduced Phase 4 sprite size."""
+        if self.selected_phase != 4 or not hasattr(entity, 'hurtbox'):
+            return
+        if not hasattr(entity, '_phase4_base_hurtbox_size'):
+            entity._phase4_base_hurtbox_size = entity.hurtbox.size
+        base_width, base_height = entity._phase4_base_hurtbox_size
+        # Sprites are rendered at ENTITY_SCALE, whereas world rectangles are
+        # projected through camera zoom. Divide by that zoom so the on-screen
+        # logical box hugs the visible sprite instead of towering over it.
+        scale = PIXEL_RUINS_ENTITY_SCALE / max(0.01, self.world_zoom)
+        desired_size = (max(10, round(base_width * scale)), max(14, round(base_height * scale)))
+        if entity.hurtbox.size != desired_size:
+            feet = entity.hurtbox.midbottom
+            entity.hurtbox.size = desired_size
+            entity.hurtbox.midbottom = feet
+
+    def _entity_is_in_tunnel(self, entity):
+        """Whether a character is passing under a tuner-authored tunnel."""
+        return (
+            self.selected_phase == 4
+            and self.pixel_ruins_map is not None
+            and hasattr(entity, 'hurtbox')
+            and any(tunnel.collidepoint(entity.hurtbox.center) for tunnel in self.pixel_ruins_map.tunnels)
+        )
+
+    def reload_pixel_ruins_layout(self):
+        """Reload tuner-authored Phase 4 collider/floor/tunnel data in place."""
+        if self.selected_phase != 4:
+            return
+        self.pixel_ruins_map = PixelRuinsMap(WIDTH, HEIGHT)
+        self.map = self.pixel_ruins_map.surface
+        self.world_width, self.world_height = self.map.get_size()
+        self.map_collision_rects = list(self.pixel_ruins_map.wall_rects)
+        self.world_render_map = pygame.transform.scale(
+            self.map,
+            (round(self.world_width * self.world_zoom), round(self.world_height * self.world_zoom)),
+        )
+        self._update_world_camera()
+
+    def _update_world_camera(self):
+        """Follow the players over the full Pixel Ruins world map."""
+        if self.selected_phase != 4 or not hasattr(self, 'world_camera'):
+            return
+        living = [player for player in self.players if player.hp > 0]
+        targets = living or list(self.players)
+        if not targets:
+            return
+        target_x = sum(player.hurtbox.centerx for player in targets) / len(targets)
+        target_y = sum(player.hurtbox.centery for player in targets) / len(targets)
+
+        # Floor zones are authored in the tuner.  Their zoom only changes the
+        # camera/map rendering; entity world coordinates stay untouched.
+        active_floor = self.pixel_ruins_map.floor_at((target_x, target_y)) if self.pixel_ruins_map else None
+        requested_zoom = float(active_floor.get('zoom', PIXEL_RUINS_CAMERA_ZOOM)) if active_floor else PIXEL_RUINS_CAMERA_ZOOM
+        requested_zoom = max(0.70, min(2.40, requested_zoom))
+        if abs(requested_zoom - self.world_zoom) > 0.001:
+            self.world_zoom = requested_zoom
+            self.world_render_map = pygame.transform.scale(
+                self.map,
+                (round(self.world_width * self.world_zoom), round(self.world_height * self.world_zoom)),
+            )
+        self.current_floor = active_floor
+        view_width = WIDTH / self.world_zoom
+        view_height = HEIGHT / self.world_zoom
+        max_x = max(0, self.world_width - view_width)
+        max_y = max(0, self.world_height - view_height)
+        self.world_camera.x = max(0, min(max_x, target_x - view_width / 2))
+        self.world_camera.y = max(0, min(max_y, target_y - view_height / 2))
 
     def spawn_enemy(self):
         side = random.choice(['left', 'right'])
-        y = random.randint(MIN_Y + 50, MAX_Y - 30)
-        x = -40 if side == 'left' else WIDTH + 40
+        if self.selected_phase == 4:
+            y = random.randint(80, self.world_height - 80)
+            x = 40 if side == 'left' else self.world_width - 40
+        else:
+            y = random.randint(MIN_Y + 50, MAX_Y - 30)
+            x = -40 if side == 'left' else WIDTH + 40
 
         if self.selected_phase == 1:
             # Phase 1: 60% goblin warrior, 40% goblin spearman
@@ -2210,6 +2343,14 @@ class Game:
                     self.paused = not self.paused
                     continue
 
+                if event.key == pygame.K_F5 and self.selected_phase == 4:
+                    self.reload_pixel_ruins_layout()
+                    continue
+
+                if event.key == pygame.K_F3 and self.selected_phase == 4:
+                    self.DEBUG_DRAW = not self.DEBUG_DRAW
+                    continue
+
                 if self.paused:
                     if len(self.players) > 0:
                         p1_upgrades = {
@@ -2250,9 +2391,11 @@ class Game:
         self._update_player_passives(dt)
         # update players
         for player in self.players:
+            self._fit_phase4_hurtbox(player)
             previous_rect = player.rect.copy()
             previous_hurtbox = player.hurtbox.copy()
             player.update(dt, keys, self.groups)
+            self._fit_phase4_hurtbox(player)
             self._resolve_map_collision(player, previous_rect, previous_hurtbox)
 
         # update enemies
@@ -2262,10 +2405,14 @@ class Game:
             if target is None:
                 continue
             self._apply_enemy_status_effects(e)
+            self._fit_phase4_hurtbox(e)
             previous_rect = e.rect.copy()
             previous_hurtbox = e.hurtbox.copy()
             e.update(dt, target, self.groups)
+            self._fit_phase4_hurtbox(e)
             self._resolve_map_collision(e, previous_rect, previous_hurtbox)
+
+        self._update_world_camera()
 
         # update enemy health bars (centralised so they tick every frame,
         # even when an enemy is in a hurt / attack / death state).
@@ -3001,7 +3148,55 @@ class Game:
 
     def draw(self):
         ox, oy = self.camera_offset
-        self.screen.blit(self.map, (ox, oy))
+        world_mode = self.selected_phase == 4
+        zoom = self.world_zoom if world_mode else 1.0
+        entity_scale = PIXEL_RUINS_ENTITY_SCALE if world_mode else 1.0
+        if world_mode:
+            self.screen.blit(
+                self.world_render_map,
+                (round(ox - self.world_camera.x * zoom), round(oy - self.world_camera.y * zoom)),
+            )
+        else:
+            self.screen.blit(self.map, (ox, oy))
+
+        def world_to_screen(x, y):
+            if not world_mode:
+                return (round(x + ox), round(y + oy))
+            return (
+                round((x - self.world_camera.x) * zoom + ox),
+                round((y - self.world_camera.y) * zoom + oy),
+            )
+
+        def world_rect_to_screen(rect):
+            x, y = world_to_screen(rect.x, rect.y)
+            return pygame.Rect(x, y, round(rect.width * zoom), round(rect.height * zoom))
+
+        def scale_world_image(image):
+            if entity_scale == 1.0:
+                return image
+            return pygame.transform.scale(
+                image,
+                (max(1, round(image.get_width() * entity_scale)), max(1, round(image.get_height() * entity_scale))),
+            )
+
+        def sprite_screen_position(sprite, image):
+            """Place native-size sprites on a zoomed map without foot drift."""
+            if not world_mode:
+                return world_to_screen(sprite.rect.x, sprite.rect.y)
+
+            if hasattr(sprite, 'hurtbox'):
+                # Characters are visually anchored to their logical foot.  The
+                # rect/hurtbox delta keeps custom animation pivots intact.
+                hurtbox = sprite.hurtbox
+                foot_x, foot_y = world_to_screen(hurtbox.centerx, hurtbox.bottom)
+                x = round(foot_x + (sprite.rect.x - hurtbox.centerx) * entity_scale)
+                y = round(foot_y + (sprite.rect.bottom - hurtbox.bottom) * entity_scale - image.get_height())
+                return x, y
+
+            # Projectiles/VFX retain their original size and stay centred on
+            # their transformed world position.
+            center_x, center_y = world_to_screen(sprite.rect.centerx, sprite.rect.centery)
+            return (round(center_x - image.get_width() / 2), round(center_y - image.get_height() / 2))
         # Create a combined list of all entities that need Y-sorting
         render_list = (list(self.all_sprites) + list(self.arrows) +
                        list(self.water_projectiles) + list(self.water_blast_projectiles) + list(self.wind_projectiles) + list(self.light_projectiles) + list(self.dark_projectiles) +
@@ -3031,7 +3226,7 @@ class Game:
                 continue
             hurtbox = sprite.hurtbox
             # Scale shadow width to roughly match the entity's footprint
-            target_w = max(20, int(hurtbox.width * 1.4))
+            target_w = max(20, int(hurtbox.width * 1.4 * entity_scale))
             if target_w not in self._shadow_cache:
                 src_w, src_h = self._shadow_src.get_size()
                 scaled_h = max(6, int(src_h * target_w / src_w))
@@ -3043,43 +3238,92 @@ class Game:
             if entity_alpha < 255:
                 shadow_surf = shadow_surf.copy()
                 shadow_surf.fill((255, 255, 255, entity_alpha), special_flags=pygame.BLEND_RGBA_MULT)
-            sx = hurtbox.centerx - shadow_surf.get_width() // 2 + ox
-            sy = hurtbox.bottom - shadow_surf.get_height() // 2 + oy
+            sx, sy = world_to_screen(hurtbox.centerx, hurtbox.bottom)
+            sx -= shadow_surf.get_width() // 2
+            sy -= shadow_surf.get_height() // 2
             self.screen.blit(shadow_surf, (sx, sy))
 
         for sprite in sorted_sprites:
-            self.screen.blit(sprite.image, (sprite.rect.x + ox, sprite.rect.y + oy))
+            image = scale_world_image(sprite.image)
+            if self._entity_is_in_tunnel(sprite):
+                # Keep the original pixel art but let the map's upper layer
+                # visually read through it, as if the character is below it.
+                image = image.copy()
+                image.set_alpha(min(getattr(sprite, 'alpha', 255), PIXEL_RUINS_TUNNEL_ENTITY_ALPHA))
+            x, y = sprite_screen_position(sprite, image)
+            self.screen.blit(image, (x, y))
 
 
         # Draw enemy health bars — always visible for living enemies
         for enemy in self.enemies:
             if getattr(enemy, 'health_bar', None) is not None and enemy.hp > 0:
-                enemy.health_bar.draw(self.screen, enemy, self.camera_offset)
+                enemy.health_bar.draw(
+                    self.screen,
+                    enemy,
+                    self.camera_offset,
+                    world_camera=self.world_camera if world_mode else None,
+                    zoom=zoom,
+                )
 
         # --- DEBUG: Hitbox / Hurtbox visualization ---
         if self.DEBUG_DRAW:
-            # Green: character hurtboxes
+            # Red transparent: zones authored in the tuner before tunnel cuts.
+            if world_mode and self.pixel_ruins_map:
+                for zone in self.pixel_ruins_map.collision_zones:
+                    screen_zone = world_rect_to_screen(zone)
+                    overlay = pygame.Surface(screen_zone.size, pygame.SRCALPHA)
+                    overlay.fill((255, 65, 65, 42))
+                    self.screen.blit(overlay, screen_zone.topleft)
+                    pygame.draw.rect(self.screen, (255, 90, 90), screen_zone, 1)
+                # Purple: tunnel regions that remove collision from red zones.
+                for tunnel in self.pixel_ruins_map.tunnels:
+                    pygame.draw.rect(self.screen, (190, 105, 255), world_rect_to_screen(tunnel), 2)
+                # Yellow: free-form boundary lines authored with mode 6.
+                for start, end in self.pixel_ruins_map.map_boundaries:
+                    pygame.draw.line(self.screen, (255, 230, 80), world_to_screen(*start), world_to_screen(*end), 3)
+
+            # Green: enemy hurtboxes; blue/orange: P1/P2 hurtboxes.
             for sprite in self.all_sprites:
                 if hasattr(sprite, 'hurtbox') and getattr(sprite, 'hp', 0) > 0:
                     r = sprite.hurtbox
-                    pygame.draw.rect(self.screen, (0, 255, 0), (r.x + ox, r.y + oy, r.width, r.height), 2)
+                    color = (0, 255, 0)
+                    if sprite in self.players:
+                        color = (70, 210, 255) if sprite is self.players[0] else (255, 180, 65)
+                    pygame.draw.rect(self.screen, color, world_rect_to_screen(r), 2)
             # Red: player attack hitboxes
             for hb in self.attacks:
                 r = hb.rect
-                pygame.draw.rect(self.screen, (255, 0, 0), (r.x + ox, r.y + oy, r.width, r.height), 2)
+                pygame.draw.rect(self.screen, (255, 0, 0), world_rect_to_screen(r), 2)
             # Magenta: enemy attack hitboxes
             for hb in self.enemy_attacks:
                 r = hb.rect
-                pygame.draw.rect(self.screen, (255, 0, 255), (r.x + ox, r.y + oy, r.width, r.height), 2)
-            # Cyan: Phase 4 wall collision rectangles.
+                pygame.draw.rect(self.screen, (255, 0, 255), world_rect_to_screen(r), 2)
+            # Cyan: final active collision pieces used by the movement code.
             for wall in self.map_collision_rects:
-                pygame.draw.rect(self.screen, (0, 220, 255), (wall.x + ox, wall.y + oy, wall.width, wall.height), 2)
+                pygame.draw.rect(self.screen, (0, 220, 255), world_rect_to_screen(wall), 2)
+            if world_mode:
+                debug_font = pygame.font.SysFont('Consolas', 14, bold=True)
+                label = debug_font.render(
+                    f'DEBUG MAP  F3: hide | Red: zone | Cyan: active | Purple: tunnel | Yellow: boundary | F5: reload ({len(self.map_collision_rects)})',
+                    True, (255, 255, 255),
+                )
+                panel = pygame.Surface((min(WIDTH - 20, label.get_width() + 16), 26), pygame.SRCALPHA)
+                panel.fill((10, 15, 24, 205))
+                self.screen.blit(panel, (10, HEIGHT - 32))
+                self.screen.blit(label, (18, HEIGHT - 28))
         # -----------------------------------------------
 
 
         # Draw damage number popups on top of everything
         for dmg in self.damage_numbers:
-            self.screen.blit(dmg.image, (dmg.rect.x + ox, dmg.rect.y + oy))
+            image = scale_world_image(dmg.image)
+            if world_mode:
+                center_x, center_y = world_to_screen(dmg.rect.centerx, dmg.rect.centery)
+                x = round(center_x - image.get_width() / 2)
+                y = round(center_y - image.get_height() / 2)
+            else:
+                x, y = world_to_screen(dmg.rect.x, dmg.rect.y)
+            self.screen.blit(image, (x, y))
 
         # HUD: player HP (drawn without camera offset)
         for idx, player in enumerate(self.players):

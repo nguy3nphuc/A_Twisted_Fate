@@ -225,7 +225,7 @@ class EnemyHealthBar:
         else:
             self.catchup_ratio = target  # snap if somehow overshot
 
-    def draw(self, surface: pygame.Surface, enemy, camera_offset=(0, 0)):
+    def draw(self, surface: pygame.Surface, enemy, camera_offset=(0, 0), world_camera=None, zoom=1.0):
         """Render the three-layer health bar above the enemy.
 
         Anchored to enemy.hurtbox.  Falls back to enemy.rect if no hurtbox.
@@ -233,8 +233,12 @@ class EnemyHealthBar:
         hurtbox = getattr(enemy, 'hurtbox', enemy.rect)
         ox, oy = camera_offset
 
-        bar_x = hurtbox.centerx - self._bar_width // 2 + ox
-        bar_y = hurtbox.top - self.VERTICAL_OFFSET + oy
+        if world_camera is not None:
+            bar_x = int((hurtbox.centerx - world_camera.x) * zoom + ox - self._bar_width // 2)
+            bar_y = int((hurtbox.top - self.VERTICAL_OFFSET - world_camera.y) * zoom + oy)
+        else:
+            bar_x = hurtbox.centerx - self._bar_width // 2 + ox
+            bar_y = hurtbox.top - self.VERTICAL_OFFSET + oy
 
         # 1. Background (full width, always)
         surface.blit(self._bg, (bar_x, bar_y))

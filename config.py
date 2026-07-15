@@ -228,6 +228,15 @@ BERSERK_ARMOR_EFFECTIVENESS_MULTIPLIER = 0.85
 # while this duration bar is running.
 HOLY_EFFECT_DURATION_MS = 8000
 
+# Visual zoom used only by the scrollable Pixel Ruins world map.
+PIXEL_RUINS_CAMERA_ZOOM = 1.3
+# Native combat sprites were authored for the old beat-'em-up background.
+# Scale them down only in the larger top-down Pixel Ruins world.
+PIXEL_RUINS_ENTITY_SCALE = 0.68
+# Characters inside a tuner-authored tunnel are drawn beneath the upper map
+# layer by fading them, creating a simple underpass effect.
+PIXEL_RUINS_TUNNEL_ENTITY_ALPHA = 115
+
 
 # Skill drop tuning by enemy tier.
 # - enemy_tiers maps class names from entities.py to a drop tier.

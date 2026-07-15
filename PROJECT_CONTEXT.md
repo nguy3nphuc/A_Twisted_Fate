@@ -191,6 +191,8 @@ player trong `Game.load()`.
   `pixel_ruins_map.py` render overview + `assets/maps/pixel_ruins_layout.json`.
   Dùng `python pixel_ruins_tuner.py` để đặt texture atlas (wall, struct, props,
   plant, grass, stone, shadow) và đánh dấu collider; nhấn `S` để xuất JSON.
+  Phase 4 là full native-size world map; camera tự theo vị trí trung bình của
+  player và scroll khi họ chạy sang khu khác.
 
 ## Quy ước khi sửa code
 
