@@ -268,8 +268,12 @@ class PixelRuinsTuner:
     def _floor_picker_rects(self):
         return {level: pygame.Rect(1000 + (level % 3) * 86, 570 + (level // 3) * 48, 76, 36) for level in range(6)}
 
-    def _floor_overlaps(self, rect, ignore_index=-1):
-        return any(rect.colliderect(pygame.Rect(floor['rect'])) for index, floor in enumerate(self.layout['floors']) if index != ignore_index)
+    def _floor_overlaps(self, rect, floor_number, ignore_index=-1):
+        """Only different floors are mutually exclusive; same floors may overlap."""
+        return any(
+            rect.colliderect(pygame.Rect(floor['rect'])) and int(floor.get('floor', 0)) != int(floor_number)
+            for index, floor in enumerate(self.layout['floors']) if index != ignore_index
+        )
 
     def _move_selected(self, dx, dy):
         if not 0 <= self.selected_index < len(self.items):
@@ -415,6 +419,10 @@ class PixelRuinsTuner:
                     for level, rect in self._floor_picker_rects().items():
                         if rect.collidepoint(event.pos):
                             item = self.layout[self.floor_picker['collection']][self.floor_picker['index']]
+                            if self.floor_picker['collection'] == 'floors' and self._floor_overlaps(pygame.Rect(item['rect']), level, self.floor_picker['index']):
+                                self.floor_notice = 'Khong the doi: vung nay de len mot tang khac.'
+                                self.floor_picker = None
+                                return
                             item[self.floor_picker['key']] = level
                             self.floor_picker = None
                             self.dirty = True
@@ -493,13 +501,13 @@ class PixelRuinsTuner:
                 if self.mode in ('stairs', 'tunnels'):
                     end = self._world_from_mouse(event.pos)
                     item['start_line'], item['end_line'] = self._box_end_lines(self.region_preview, self.region_create_start, end)
-                if self.mode == 'floors' and self._floor_overlaps(self.region_preview):
+                if self.mode == 'floors' and self._floor_overlaps(self.region_preview, 0):
                     self.floor_notice = 'Khong the tao: vung tang dang chong len tang khac.'
                 else:
                     self.items.append(item)
                     self.selected_index = len(self.items) - 1
                     self.dirty = True
-            if self.mode == 'floors' and self.region_drag_index >= 0 and self._floor_overlaps(pygame.Rect(self.items[self.region_drag_index]['rect']), self.region_drag_index):
+            if self.mode == 'floors' and self.region_drag_index >= 0 and self._floor_overlaps(pygame.Rect(self.items[self.region_drag_index]['rect']), self.items[self.region_drag_index].get('floor', 0), self.region_drag_index):
                 self.items[self.region_drag_index]['rect'] = self.region_drag_original
                 self.floor_notice = 'Da tra ve vi tri cu: vung tang khong duoc chong nhau.'
             self.atlas_drag_start = None
