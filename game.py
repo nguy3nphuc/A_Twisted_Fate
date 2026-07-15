@@ -2742,11 +2742,13 @@ class Game:
                     enemy.take_damage(final_damage, source_x=shockwave.rect.centerx, is_crit=is_crit)
                     
                     # Apply knockback AFTER take_damage to prevent it from being overwritten
-                    if is_front:
+                    # Boss enemies (GoblinTank, FatCultist, DeathBringer) are immune to knockback
+                    is_boss = getattr(enemy, 'is_boss', False)
+                    if is_front and not is_boss:
                         knockback_dir = shockwave.facing
                         enemy.vel.x = knockback_dir * shockwave.knockback
                         enemy.hurt_timer = max(getattr(enemy, 'hurt_timer', 0), 600)
-                    else:
+                    elif not is_boss:
                         enemy.vel.x = 0  # No knockback for rear hits
                         enemy.hurt_timer = max(getattr(enemy, 'hurt_timer', 0), 300)
 

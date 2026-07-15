@@ -3345,6 +3345,7 @@ class GoblinSpearman(pygame.sprite.Sprite, HealthMixin):
 
 
 class GoblinTank(pygame.sprite.Sprite, HealthMixin):
+    is_boss = True  # Boss enemies are immune to knight ultimate knockback
     def __init__(self, pos=(800, 300)):
         pygame.sprite.Sprite.__init__(self)
         HealthMixin.__init__(self, max_hp=250)
@@ -3722,6 +3723,7 @@ class GoblinTank(pygame.sprite.Sprite, HealthMixin):
 
 class FatCultist(pygame.sprite.Sprite, HealthMixin):
     """Miniboss for Phase 3. Slow movement, high HP, 2 attack animations."""
+    is_boss = True  # Boss enemies are immune to knight ultimate knockback
     def __init__(self, pos):
         pygame.sprite.Sprite.__init__(self)
         HealthMixin.__init__(self, max_hp=500)
@@ -3745,6 +3747,9 @@ class FatCultist(pygame.sprite.Sprite, HealthMixin):
         # State machine
         self.is_attacking = False
         self.combo_step = 0
+        self.attack_timer = 0      # cooldown between combo sequences
+        self.ai_state = 'chase'    # 'chase' | 'wait'
+        self.ai_timer = 0          # ms remaining in wait state
 
     @property
     def foot_y(self):
@@ -3772,7 +3777,7 @@ class FatCultist(pygame.sprite.Sprite, HealthMixin):
             self.animator.update(dt)
             if self.animator.is_finished():
                 self.kill()
-            self._update_hurtbox()
+            self._update_visuals()  # must call to update self.image with death frames
             return
             
         if self.hurt_timer > 0:
@@ -3780,7 +3785,7 @@ class FatCultist(pygame.sprite.Sprite, HealthMixin):
             self.animator.update(dt)
             if self.animator.is_finished():
                 self.hurt_timer = 0
-                self.animator.set_state('idle')
+                self.animator.set_state('idle', reset=False)
         else:
             self._update_ai(dt, player, groups)
             self.animator.update(dt)
@@ -3790,38 +3795,44 @@ class FatCultist(pygame.sprite.Sprite, HealthMixin):
         self._update_visuals()
 
     def _update_ai(self, dt, player, groups):
+        # Use hurtbox for accurate distance measurement
         target_x = player.hurtbox.centerx
         target_y = player.foot_y
-        dist_x = target_x - self.rect.centerx
-        dist_y = target_y - (self.rect.bottom + ENEMY_ATTACK_OFFSET_Y)
-        real_dist_x = player.hurtbox.centerx - self.rect.centerx
-        real_dist_y = player.rect.bottom - (self.rect.bottom + ENEMY_ATTACK_OFFSET_Y)
-        
+        dist_x = target_x - self.hurtbox.centerx
+        dist_y = target_y - self.hurtbox.bottom
+
+        # --- wait state after a combo finishes ---
+        if self.ai_state == 'wait':
+            self.ai_timer -= dt
+            self.animator.set_state('idle', reset=False)
+            if self.ai_timer <= 0:
+                self.ai_state = 'chase'
+            return
+
         if not self.is_attacking:
             self.facing = 1 if dist_x > 0 else -1
-            
+
             in_range_attack1 = abs(dist_x) <= FAT_CULTIST_ATTACK_RANGE_X and abs(dist_y) <= FAT_CULTIST_ATTACK_RANGE_Y
             in_range_attack2 = abs(dist_x) <= FAT_CULTIST_ATTACK_2_RANGE_X and abs(dist_y) <= FAT_CULTIST_ATTACK_2_RANGE_Y
-            
-            if in_range_attack1 or in_range_attack2:
+
+            now = pygame.time.get_ticks()
+            attack_ready = (now - self.attack_timer) > 1200  # min delay between combos
+
+            if attack_ready and (in_range_attack1 or in_range_attack2):
                 self.vel.x = 0
                 self.vel.y = 0
                 self.is_attacking = True
                 self.has_attacked = False
-                
-                # Randomly pick attack based on range
-                if in_range_attack1 and in_range_attack2:
-                    if random.random() < 0.5:
-                        self.animator.set_state('attack1', reset=True)
-                        self.combo_step = 1
-                    else:
-                        self.animator.set_state('attack2', reset=True)
-                        self.combo_step = 2
-                elif in_range_attack2:
+                # Always start with attack1 if in range, else attack2
+                if in_range_attack1:
+                    self.animator.set_state('attack1', reset=True)
+                    self.combo_step = 1
+                else:
                     self.animator.set_state('attack2', reset=True)
                     self.combo_step = 2
+                self.attack_timer = now
             else:
-                self.animator.set_state('run')
+                self.animator.set_state('run', reset=False)  # reset=False prevents frame-0 lock
                 dist = math.hypot(dist_x, dist_y)
                 if dist > 0:
                     self.vel.x = (dist_x / dist) * self.speed
@@ -3829,24 +3840,39 @@ class FatCultist(pygame.sprite.Sprite, HealthMixin):
         else:
             self.vel.x = 0
             self.vel.y = 0
-            
+
             sn = self.animator.state
             entry = self.animator.states_config.get(sn, {})
             hit_frames = entry.get('hit_frame', [6])
             if not isinstance(hit_frames, list):
                 hit_frames = [hit_frames]
-                
+
             if self.animator.frame_index in hit_frames and not self.has_attacked:
                 damage = 35 if self.combo_step == 2 else 20
                 self._spawn_enemy_attack_hitbox(groups, damage)
                 self.has_attacked = True
-                
+
             if self.animator.frame_index not in hit_frames:
                 self.has_attacked = False
-                
+
             if self.animator.is_finished():
+                if self.combo_step == 1:
+                    # Check if still in range to chain into attack2
+                    cur_dist_x = player.hurtbox.centerx - self.hurtbox.centerx
+                    cur_dist_y = player.foot_y - self.hurtbox.bottom
+                    in_range2 = abs(cur_dist_x) <= FAT_CULTIST_ATTACK_2_RANGE_X and abs(cur_dist_y) <= FAT_CULTIST_ATTACK_2_RANGE_Y
+                    if in_range2:
+                        # Chain combo to attack2
+                        self.combo_step = 2
+                        self.animator.set_state('attack2', reset=True)
+                        self.has_attacked = False
+                        return
+                # Combo fully done
                 self.is_attacking = False
-                self.animator.set_state('idle')
+                self.combo_step = 0
+                self.animator.set_state('idle', reset=False)
+                self.ai_state = 'wait'
+                self.ai_timer = random.randint(600, 1200)
 
     def _spawn_enemy_attack_hitbox(self, groups, damage):
         sn = self.animator.state
@@ -3946,6 +3972,7 @@ class DeathBringerSpell(pygame.sprite.Sprite):
 
 class DeathBringer(pygame.sprite.Sprite, HealthMixin):
     """Final Boss for Phase 3. Has standard melee attack, and a spell attack that spawns a spell effect."""
+    is_boss = True  # Boss enemies are immune to knight ultimate knockback
     def __init__(self, pos):
         pygame.sprite.Sprite.__init__(self)
         HealthMixin.__init__(self, max_hp=1000)
@@ -3995,7 +4022,7 @@ class DeathBringer(pygame.sprite.Sprite, HealthMixin):
             self.animator.update(dt)
             if self.animator.is_finished():
                 self.kill()
-            self._update_hurtbox()
+            self._update_visuals()  # must call to update self.image with death frames
             return
             
         if self.hurt_timer > 0:
@@ -4003,7 +4030,7 @@ class DeathBringer(pygame.sprite.Sprite, HealthMixin):
             self.animator.update(dt)
             if self.animator.is_finished():
                 self.hurt_timer = 0
-                self.animator.set_state('idle')
+                self.animator.set_state('idle', reset=False)
         else:
             self._update_ai(dt, player, groups)
             self.animator.update(dt)
@@ -4043,7 +4070,7 @@ class DeathBringer(pygame.sprite.Sprite, HealthMixin):
                 self.has_attacked = False
                 self.animator.set_state('attack', reset=True)
             else:
-                self.animator.set_state('run')
+                self.animator.set_state('run', reset=False)  # reset=False prevents frame-0 lock
                 dist = math.hypot(dist_x, dist_y)
                 if dist > 0:
                     self.vel.x = (dist_x / dist) * self.speed
@@ -4060,8 +4087,10 @@ class DeathBringer(pygame.sprite.Sprite, HealthMixin):
                     
             elif self.animator.state == 'cast':
                 if self.animator.frame_index == 3 and not self.has_attacked:
-                    # Spawn the spell effect right on top of the player's feet
-                    spell = DeathBringerSpell(player.hurtbox.centerx, player.foot_y, damage=50, groups=groups)
+                    # Spawn the spell effect centered on the player's hurtbox so it hits them reliably
+                    spell_x = player.hurtbox.centerx
+                    spell_y = player.hurtbox.centery  # align to hurtbox center, not feet
+                    spell = DeathBringerSpell(spell_x, spell_y, damage=50, groups=groups)
                     groups['effects'].add(spell)
                     self.has_attacked = True
                     

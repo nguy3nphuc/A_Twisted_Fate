@@ -705,67 +705,67 @@
     "fat_cultist": {
         "scale": 2.5,
         "folder": "assets/monsters/fat_cultist",
-        "hurtbox_w": 44,
-        "hurtbox_h": 60,
-        "hurtbox_offset_x": 0,
+        "hurtbox_w": 26,
+        "hurtbox_h": 36,
+        "hurtbox_offset_x": 9,
         "animations": {
             "idle": {
                 "file": "Fat_Cultist_Idle.png",
-                "frames": 10,
+                "frames": 9,
                 "duration": 150,
                 "loop": true,
-                "pivot_x": 22,
-                "pivot_y": 38
+                "pivot_x": 8,
+                "pivot_y": 41
             },
             "run": {
                 "file": "Fat_Cultist_Run.png",
-                "frames": 7,
+                "frames": 8,
                 "duration": 100,
                 "loop": true,
-                "pivot_x": 24,
-                "pivot_y": 42
+                "pivot_x": 3,
+                "pivot_y": 46
             },
             "attack1": {
                 "file": "Fat_Cultist_Attack1.png",
-                "frames": 12,
+                "frames": 8,
                 "duration": 80,
                 "loop": false,
                 "hit_frame": 6,
-                "pivot_x": 28,
-                "pivot_y": 52,
-                "hitbox_w": 60,
-                "hitbox_h": 40,
-                "hitbox_offset_x": 0,
-                "hitbox_offset_y": 0
+                "pivot_x": 23,
+                "pivot_y": 56,
+                "hitbox_w": 56,
+                "hitbox_h": 16,
+                "hitbox_offset_x": 4,
+                "hitbox_offset_y": -17
             },
             "attack2": {
                 "file": "Fat_Cultist_Attack2.png",
-                "frames": 18,
+                "frames": 12,
                 "duration": 80,
                 "loop": false,
                 "hit_frame": 10,
-                "pivot_x": 28,
-                "pivot_y": 52,
-                "hitbox_w": 80,
-                "hitbox_h": 50,
-                "hitbox_offset_x": 0,
-                "hitbox_offset_y": 0
+                "pivot_x": 22,
+                "pivot_y": 56,
+                "hitbox_w": 41,
+                "hitbox_h": 14,
+                "hitbox_offset_x": 12,
+                "hitbox_offset_y": -14
             },
             "hit": {
                 "file": "Fat_Cultist_Hurt.png",
                 "frames": 3,
                 "duration": 100,
                 "loop": false,
-                "pivot_x": 24,
-                "pivot_y": 38
+                "pivot_x": 7,
+                "pivot_y": 41
             },
             "death": {
                 "file": "Fat_Cultist_Dead.png",
-                "frames": 20,
+                "frames": 11,
                 "duration": 100,
                 "loop": false,
-                "pivot_x": 20,
-                "pivot_y": 38
+                "pivot_x": 22,
+                "pivot_y": 41
             }
         }
     },
@@ -773,61 +773,61 @@
         "scale": 2.5,
         "folder": "assets/monsters/bringer_of_death",
         "hurtbox_w": 40,
-        "hurtbox_h": 80,
-        "hurtbox_offset_x": 0,
+        "hurtbox_h": 54,
+        "hurtbox_offset_x": 13,
         "animations": {
             "idle": {
                 "file": "Bringer_of_Death_Idle.png",
-                "frames": 6,
+                "frames": 8,
                 "duration": 150,
                 "loop": true,
-                "pivot_x": 31,
-                "pivot_y": 50
+                "pivot_x": 11,
+                "pivot_y": 56
             },
             "run": {
                 "file": "Bringer_of_Death_Walk.png",
                 "frames": 8,
                 "duration": 100,
                 "loop": true,
-                "pivot_x": 28,
-                "pivot_y": 49
+                "pivot_x": 14,
+                "pivot_y": 55
             },
             "attack": {
                 "file": "Bringer-of-Death_Attack.png",
-                "frames": 16,
+                "frames": 10,
                 "duration": 70,
                 "loop": false,
                 "hit_frame": 7,
-                "pivot_x": 43,
-                "pivot_y": 79,
-                "hitbox_w": 80,
-                "hitbox_h": 60,
-                "hitbox_offset_x": 0,
-                "hitbox_offset_y": 0
+                "pivot_x": 23,
+                "pivot_y": 85,
+                "hitbox_w": 98,
+                "hitbox_h": 23,
+                "hitbox_offset_x": 20,
+                "hitbox_offset_y": -19
             },
             "cast": {
                 "file": "Bringer_of_Death_Cast.png",
-                "frames": 5,
+                "frames": 9,
                 "duration": 120,
                 "loop": false,
-                "pivot_x": 48,
-                "pivot_y": 86
+                "pivot_x": 9,
+                "pivot_y": 92
             },
             "hit": {
                 "file": "Bringer_of_Death_Hurt.png",
-                "frames": 2,
+                "frames": 3,
                 "duration": 100,
                 "loop": false,
-                "pivot_x": 35,
-                "pivot_y": 49
+                "pivot_x": 10,
+                "pivot_y": 55
             },
             "death": {
                 "file": "Bringer_of_Death_Death.png",
-                "frames": 8,
+                "frames": 10,
                 "duration": 120,
                 "loop": false,
-                "pivot_x": 33,
-                "pivot_y": 61
+                "pivot_x": 18,
+                "pivot_y": 67
             }
         }
     },
@@ -837,17 +837,20 @@
         "animations": {
             "spell": {
                 "file": "Bringer-of-Death_Spell.png",
-                "frames": 10,
+                "frames": 16,
                 "duration": 80,
                 "loop": false,
                 "hit_frame": 4,
-                "pivot_x": 29,
-                "pivot_y": 51,
-                "hitbox_w": 80,
-                "hitbox_h": 120,
-                "hitbox_offset_x": -40,
-                "hitbox_offset_y": -100
+                "pivot_x": 18,
+                "pivot_y": 57,
+                "hitbox_w": 26,
+                "hitbox_h": 12,
+                "hitbox_offset_x": -9,
+                "hitbox_offset_y": -6
             }
-        }
+        },
+        "hurtbox_w": 16,
+        "hurtbox_h": 57,
+        "hurtbox_offset_x": 0
     }
 }
