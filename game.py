@@ -1836,6 +1836,8 @@ class Game:
         for player in self.players:
             self._ensure_player_resources(player)
             self._ensure_player_abilities(player)
+            player.map_floor = 1
+            player.map_floor_zoom = PIXEL_RUINS_CAMERA_ZOOM
         for player in self.players:
             self.all_sprites.add(player)
 
@@ -1922,6 +1924,17 @@ class Game:
             and any(tunnel.collidepoint(entity.hurtbox.center) for tunnel in self.pixel_ruins_map.tunnels)
         )
 
+    def _update_player_stair_floor(self, player, previous_hurtbox):
+        """Switch floor when a player crosses either end line of a stair box."""
+        if self.selected_phase != 4 or not self.pixel_ruins_map:
+            return
+        reached = self.pixel_ruins_map.stair_end_line_crossed(
+            previous_hurtbox.center, player.hurtbox.center,
+        )
+        if reached is not None:
+            player.map_floor = reached['floor']
+            player.map_floor_zoom = reached['zoom']
+
     def reload_pixel_ruins_layout(self):
         """Reload tuner-authored Phase 4 collider/floor/tunnel data in place."""
         if self.selected_phase != 4:
@@ -1947,10 +1960,11 @@ class Game:
         target_x = sum(player.hurtbox.centerx for player in targets) / len(targets)
         target_y = sum(player.hurtbox.centery for player in targets) / len(targets)
 
-        # Floor zones are authored in the tuner.  Their zoom only changes the
-        # camera/map rendering; entity world coordinates stay untouched.
-        active_floor = self.pixel_ruins_map.floor_at((target_x, target_y)) if self.pixel_ruins_map else None
-        requested_zoom = float(active_floor.get('zoom', PIXEL_RUINS_CAMERA_ZOOM)) if active_floor else PIXEL_RUINS_CAMERA_ZOOM
+        # Stair endpoints determine floors. The lead living player controls
+        # the shared co-op camera so its floor number/zoom is unambiguous.
+        camera_player = next((player for player in self.players if player.hp > 0), targets[0])
+        active_floor = getattr(camera_player, 'map_floor', 1)
+        requested_zoom = float(getattr(camera_player, 'map_floor_zoom', PIXEL_RUINS_CAMERA_ZOOM))
         requested_zoom = max(0.70, min(2.40, requested_zoom))
         if abs(requested_zoom - self.world_zoom) > 0.001:
             self.world_zoom = requested_zoom
@@ -2397,6 +2411,7 @@ class Game:
             player.update(dt, keys, self.groups)
             self._fit_phase4_hurtbox(player)
             self._resolve_map_collision(player, previous_rect, previous_hurtbox)
+            self._update_player_stair_floor(player, previous_hurtbox)
 
         # update enemies
         for e in list(self.enemies):
@@ -3281,6 +3296,18 @@ class Game:
                 # Yellow: free-form boundary lines authored with mode 6.
                 for start, end in self.pixel_ruins_map.map_boundaries:
                     pygame.draw.line(self.screen, (255, 230, 80), world_to_screen(*start), world_to_screen(*end), 3)
+                # Orange: stair boxes. Entering one toggles between its two
+                # configured floor/zoom pairs.
+                debug_font = pygame.font.SysFont('Consolas', 14, bold=True)
+                for stair in self.pixel_ruins_map.stairs:
+                    rect = world_rect_to_screen(stair['rect'])
+                    pygame.draw.rect(self.screen, (255, 165, 65), rect, 3)
+                    text = debug_font.render(f"T{stair['from_floor']} -> T{stair['to_floor']}", True, (255, 165, 65))
+                    self.screen.blit(text, (rect.x + 4, rect.y + 4))
+                    for line, color, label in ((stair['start_line'], (85, 255, 170), 'A'), (stair['end_line'], (255, 95, 145), 'B')):
+                        start, end = world_to_screen(*line[0]), world_to_screen(*line[1])
+                        pygame.draw.line(self.screen, color, start, end, 5)
+                        self.screen.blit(debug_font.render(label, True, (20, 20, 20)), (start[0] + 4, start[1] + 4))
 
             # Green: enemy hurtboxes; blue/orange: P1/P2 hurtboxes.
             for sprite in self.all_sprites:
@@ -3302,9 +3329,8 @@ class Game:
             for wall in self.map_collision_rects:
                 pygame.draw.rect(self.screen, (0, 220, 255), world_rect_to_screen(wall), 2)
             if world_mode:
-                debug_font = pygame.font.SysFont('Consolas', 14, bold=True)
                 label = debug_font.render(
-                    f'DEBUG MAP  F3: hide | Red: zone | Cyan: active | Purple: tunnel | Yellow: boundary | F5: reload ({len(self.map_collision_rects)})',
+                    f'DEBUG MAP  F3: hide | Red: zone | Cyan: active | Purple: tunnel | Yellow: boundary | Orange: stairs | Floor T{self.current_floor} | F5: reload ({len(self.map_collision_rects)})',
                     True, (255, 255, 255),
                 )
                 panel = pygame.Surface((min(WIDTH - 20, label.get_width() + 16), 26), pygame.SRCALPHA)

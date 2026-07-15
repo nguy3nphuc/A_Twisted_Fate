@@ -18,14 +18,14 @@ ZOOM_OUT_RECT = pygame.Rect(760, 8, 34, 28)
 ZOOM_IN_RECT = pygame.Rect(890, 8, 34, 28)
 GRID = 32
 MOVE_SNAP = 2
-MODES = ('details', 'collision_zones', 'floors', 'stairs', 'tunnels', 'map_boundaries')
+MODES = ('details', 'collision_zones', 'stairs', 'tunnels', 'map_boundaries')
 MODE_LABELS = {
     'details': 'TEXTURE', 'collision_zones': 'COLLIDER',
-    'floors': 'TANG', 'stairs': 'CAU THANG', 'tunnels': 'HAM', 'map_boundaries': 'VIEN MAP',
+    'stairs': 'CAU THANG', 'tunnels': 'HAM', 'map_boundaries': 'VIEN MAP',
 }
 MODE_COLORS = {
-    'collision_zones': (245, 80, 80), 'floors': (75, 185, 255),
-    'stairs': (255, 165, 65), 'tunnels': (190, 105, 255), 'map_boundaries': (80, 235, 255),
+    'collision_zones': (245, 80, 80), 'stairs': (255, 165, 65),
+    'tunnels': (190, 105, 255), 'map_boundaries': (80, 235, 255),
 }
 TEXTURE_OUTLINE_COLORS = {
     'struct': (80, 210, 255),
@@ -71,6 +71,7 @@ class PixelRuinsTuner:
         self.line_drag_index = -1
         self.line_drag_anchor = None
         self.line_drag_original = None
+        self.floor_picker = None
         self.show_help = True
         self.exit_confirm = False
         self.dirty = False
@@ -160,8 +161,10 @@ class PixelRuinsTuner:
     def _new_region(self, rect):
         if self.mode == 'collision_zones':
             return {'rect': list(rect)}
-        if self.mode == 'floors':
-            return {'id': self._next_floor_id(), 'name': f'Tang {self._next_floor_id()}', 'rect': list(rect), 'zoom': 1.30}
+        if self.mode == 'stairs':
+            return {'rect': list(rect), 'start_line': [[rect.left, rect.top], [rect.left, rect.bottom]],
+                    'end_line': [[rect.right, rect.top], [rect.right, rect.bottom]],
+                    'from_floor': 1, 'to_floor': 2, 'from_zoom': 1.30, 'to_zoom': 1.30}
         if self.mode == 'tunnels':
             return {'rect': list(rect)}
         if self.mode == 'map_boundaries':
@@ -170,8 +173,21 @@ class PixelRuinsTuner:
         return {'rect': list(rect), 'from_floor': floor_ids[0] if floor_ids else 1,
                 'to_floor': floor_ids[1] if len(floor_ids) > 1 else (floor_ids[0] if floor_ids else 2)}
 
+    @staticmethod
+    def _stair_end_lines(rect, start, end):
+        """Create two full-width end lines from the direction of the drag."""
+        if abs(end[0] - start[0]) >= abs(end[1] - start[1]):
+            return ([[round(start[0]), rect.top], [round(start[0]), rect.bottom]],
+                    [[round(end[0]), rect.top], [round(end[0]), rect.bottom]])
+        return ([[rect.left, round(start[1])], [rect.right, round(start[1])]],
+                [[rect.left, round(end[1])], [rect.right, round(end[1])]])
+
     def _floor_ids(self):
-        return [int(floor.get('id', index + 1)) for index, floor in enumerate(self.layout['floors'])]
+        ids = set()
+        for stair in self.layout['stairs']:
+            ids.add(int(stair.get('from_floor', 1)))
+            ids.add(int(stair.get('to_floor', 2)))
+        return sorted(ids) or [1, 2]
 
     def _next_floor_id(self):
         return max(self._floor_ids(), default=0) + 1
@@ -221,6 +237,20 @@ class PixelRuinsTuner:
         self.region_create_start = self.region_preview = None
         self.line_create_start = self.line_preview_end = None
         self.line_drag_index = -1
+        self.floor_picker = None
+
+    @staticmethod
+    def _point_to_segment_distance(point, start, end):
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        length_sq = dx * dx + dy * dy
+        if length_sq == 0:
+            return pygame.Vector2(point).distance_to(start)
+        ratio = max(0, min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length_sq))
+        closest = (start[0] + dx * ratio, start[1] + dy * ratio)
+        return pygame.Vector2(point).distance_to(closest)
+
+    def _floor_picker_rects(self):
+        return {level: pygame.Rect(1000 + (level % 3) * 86, 570 + (level // 3) * 48, 76, 36) for level in range(6)}
 
     def _move_selected(self, dx, dy):
         if not 0 <= self.selected_index < len(self.items):
@@ -233,16 +263,25 @@ class PixelRuinsTuner:
             for point_name in ('start', 'end'):
                 line[point_name][0] += dx
                 line[point_name][1] += dy
+        elif self.mode == 'stairs':
+            stair = self.items[self.selected_index]
+            stair['rect'][0] += dx
+            stair['rect'][1] += dy
+            for line_name in ('start_line', 'end_line'):
+                for point in stair[line_name]:
+                    point[0] += dx
+                    point[1] += dy
         else:
             self.items[self.selected_index]['rect'][0] += dx
             self.items[self.selected_index]['rect'][1] += dy
         self.dirty = True
 
-    def _change_floor_zoom(self, direction):
-        if self.mode != 'floors' or not 0 <= self.selected_index < len(self.items):
+    def _change_stair_zoom(self, direction, target=False):
+        if self.mode != 'stairs' or not 0 <= self.selected_index < len(self.items):
             return
-        floor = self.items[self.selected_index]
-        floor['zoom'] = round(max(0.70, min(2.40, float(floor.get('zoom', 1.30)) + direction * .05)), 2)
+        stair = self.items[self.selected_index]
+        key = 'to_zoom' if target else 'from_zoom'
+        stair[key] = round(max(0.70, min(2.40, float(stair.get(key, 1.30)) + direction * .05)), 2)
         self.dirty = True
 
     def _change_stair_floor(self, direction, target):
@@ -260,7 +299,11 @@ class PixelRuinsTuner:
 
     def _handle_key(self, key, modifiers):
         step = GRID if modifiers & pygame.KMOD_SHIFT else 1
-        mode_keys = {pygame.K_1: 'details', pygame.K_2: 'collision_zones', pygame.K_3: 'floors', pygame.K_4: 'stairs', pygame.K_5: 'tunnels', pygame.K_6: 'map_boundaries'}
+        mode_keys = {pygame.K_1: 'details', pygame.K_2: 'collision_zones', pygame.K_4: 'stairs', pygame.K_5: 'tunnels', pygame.K_6: 'map_boundaries'}
+        if self.mode == 'stairs' and modifiers & pygame.KMOD_SHIFT and pygame.K_0 <= key <= pygame.K_9 and 0 <= self.selected_index < len(self.items):
+            self.items[self.selected_index]['to_floor' if modifiers & pygame.KMOD_CTRL else 'from_floor'] = key - pygame.K_0
+            self.dirty = True
+            return
         if key in mode_keys:
             self._switch_mode(mode_keys[key])
         elif key == pygame.K_s:
@@ -283,13 +326,13 @@ class PixelRuinsTuner:
                 self.texture_index = (self.texture_index - 1) % len(self.texture_names)
                 self._clamp_source()
             else:
-                self._change_floor_zoom(-1)
+                self._change_stair_zoom(-1, bool(modifiers & pygame.KMOD_SHIFT))
         elif key == pygame.K_RIGHTBRACKET:
             if self.mode == 'details':
                 self.texture_index = (self.texture_index + 1) % len(self.texture_names)
                 self._clamp_source()
             else:
-                self._change_floor_zoom(1)
+                self._change_stair_zoom(1, bool(modifiers & pygame.KMOD_SHIFT))
         elif key == pygame.K_COMMA:
             self._change_stair_floor(-1, bool(modifiers & pygame.KMOD_SHIFT))
         elif key == pygame.K_PERIOD:
@@ -321,6 +364,19 @@ class PixelRuinsTuner:
         return pygame.Rect(left, top, max(1, right - left), max(1, bottom - top))
 
     def _handle_mouse(self, event):
+        if self.floor_picker is not None:
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    for level, rect in self._floor_picker_rects().items():
+                        if rect.collidepoint(event.pos):
+                            stair = self.layout['stairs'][self.floor_picker['index']]
+                            stair[self.floor_picker['key']] = level
+                            self.floor_picker = None
+                            self.dirty = True
+                            return
+                if event.button in (1, 3):
+                    self.floor_picker = None
+            return
         if event.type == pygame.MOUSEWHEEL:
             if VIEWPORT.collidepoint(pygame.mouse.get_pos()):
                 if pygame.key.get_mods() & pygame.KMOD_SHIFT:
@@ -350,8 +406,15 @@ class PixelRuinsTuner:
             wx, wy = self._world_from_mouse(event.pos)
             snap = 1 if pygame.key.get_mods() & pygame.KMOD_CTRL else MOVE_SNAP
             rect = self.items[self.region_drag_index]['rect']
+            old_x, old_y = rect[0], rect[1]
             rect[0] = round((wx - self.region_drag_offset[0]) / snap) * snap
             rect[1] = round((wy - self.region_drag_offset[1]) / snap) * snap
+            if self.mode == 'stairs':
+                dx, dy = rect[0] - old_x, rect[1] - old_y
+                for line_name in ('start_line', 'end_line'):
+                    for point in self.items[self.region_drag_index][line_name]:
+                        point[0] += dx
+                        point[1] += dy
             self.dirty = True
             return
 
@@ -381,7 +444,11 @@ class PixelRuinsTuner:
                     self.selected_index = len(self.items) - 1
                     self.dirty = True
             if self.region_create_start and self.region_preview and self.region_preview.width >= 4 and self.region_preview.height >= 4:
-                self.items.append(self._new_region(self.region_preview))
+                item = self._new_region(self.region_preview)
+                if self.mode == 'stairs':
+                    end = self._world_from_mouse(event.pos)
+                    item['start_line'], item['end_line'] = self._stair_end_lines(self.region_preview, self.region_create_start, end)
+                self.items.append(item)
                 self.selected_index = len(self.items) - 1
                 self.dirty = True
             self.atlas_drag_start = None
@@ -408,6 +475,18 @@ class PixelRuinsTuner:
             return
         world = self._world_from_mouse(event.pos)
         if event.button == 3:
+            if self.mode == 'stairs':
+                # A/B are lines, not points. Right-click the line to choose
+                # the floor for that specific end from the 0–5 picker.
+                tolerance = 10 / self.map_zoom
+                for index in range(len(self.items) - 1, -1, -1):
+                    stair = self.items[index]
+                    for line_key, floor_key in (('start_line', 'from_floor'), ('end_line', 'to_floor')):
+                        line = stair.get(line_key, [])
+                        if len(line) == 2 and self._point_to_segment_distance(world, line[0], line[1]) <= tolerance:
+                            self.selected_index = index
+                            self.floor_picker = {'index': index, 'key': floor_key, 'end': 'A' if line_key == 'start_line' else 'B'}
+                            return
             self._select_item(world)
             return
         if event.button != 1:
@@ -461,17 +540,20 @@ class PixelRuinsTuner:
         overlay.fill((*color, 42))
         self.screen.blit(overlay, rect.topleft)
         pygame.draw.rect(self.screen, color, rect, 2 if index == self.selected_index else 1)
-        if self.mode == 'floors':
-            self._draw_text(f"{item.get('name', 'Tang')} z:{float(item.get('zoom', 1.3)):.2f}", rect.x + 3, rect.y + 3, color, True)
-        elif self.mode == 'stairs':
-            self._draw_text(f"{item.get('from_floor', 1)} -> {item.get('to_floor', 2)}", rect.x + 3, rect.y + 3, color, True)
+        if self.mode == 'stairs':
+            self._draw_text(f"T{item.get('from_floor', 1)} z:{float(item.get('from_zoom', 1.30)):.2f} <-> T{item.get('to_floor', 2)} z:{float(item.get('to_zoom', 1.30)):.2f}", rect.x + 3, rect.y + 3, color, True)
+            for line, line_color, label in ((item['start_line'], (85, 255, 170), 'A'), (item['end_line'], (255, 95, 145), 'B')):
+                screen_line = [(round(VIEWPORT.x + (point[0] - self.camera_x) * self.map_zoom), round(VIEWPORT.y + (point[1] - self.camera_y) * self.map_zoom)) for point in line]
+                pygame.draw.line(self.screen, line_color, screen_line[0], screen_line[1], 5)
+                self._draw_text(label, screen_line[0][0] + 4, screen_line[0][1] + 4, (20, 20, 20), True)
 
     def _draw_boundary_line(self, item, index):
         start, end = item['start'], item['end']
         start_screen = (round(VIEWPORT.x + (start[0] - self.camera_x) * self.map_zoom), round(VIEWPORT.y + (start[1] - self.camera_y) * self.map_zoom))
         end_screen = (round(VIEWPORT.x + (end[0] - self.camera_x) * self.map_zoom), round(VIEWPORT.y + (end[1] - self.camera_y) * self.map_zoom))
         width = 5 if index == self.selected_index else 3
-        pygame.draw.line(self.screen, MODE_COLORS['map_boundaries'], start_screen, end_screen, width)
+        color = MODE_COLORS[self.mode]
+        pygame.draw.line(self.screen, color, start_screen, end_screen, width)
         pygame.draw.circle(self.screen, (245, 255, 255), start_screen, 3)
         pygame.draw.circle(self.screen, (245, 255, 255), end_screen, 3)
 
@@ -516,7 +598,8 @@ class PixelRuinsTuner:
                 for index, item in enumerate(self.items):
                     self._draw_region(item, MODE_COLORS[self.mode], index)
                 if self.region_preview:
-                    self._draw_region({'rect': list(self.region_preview)}, MODE_COLORS[self.mode], -2)
+                    preview_item = self._new_region(self.region_preview)
+                    self._draw_region(preview_item, MODE_COLORS[self.mode], -2)
         pygame.draw.rect(self.screen, (240, 240, 240), VIEWPORT, 1)
 
         texture = self.selected_texture
@@ -528,7 +611,7 @@ class PixelRuinsTuner:
         pygame.draw.rect(self.screen, (255, 225, 70), select, 2)
         pygame.draw.rect(self.screen, (220, 220, 220), ATLAS_RECT, 1)
         info = [
-            '1 Texture | 2 Collider | 3 Tang | 4 Cau thang | 5 Ham | 6 Vien map',
+            '1 Texture | 2 Collider | 4 Cau thang box | 5 Ham | 6 Vien map',
             'Keo chuot o map: tao vung/line | keo doi tuong: di chuyen',
             'Ctrl khi keo: chinh 1px | mac dinh: 2px',
             'R-click: chon | Delete: xoa | S: luu | H: huong dan',
@@ -537,8 +620,8 @@ class PixelRuinsTuner:
         if self.mode == 'details':
             info += ['[ / ]: doi texture | Keo atlas: chon crop | Ctrl+click: dat moi',
                      'Khung mau: struct xanh | props cam | plant xanh la | player hong | shadow tim']
-        elif self.mode == 'floors':
-            info += ['[ / ]: zoom tang -/+ 0.05']
+        elif self.mode == 'stairs':
+            info += ['Shift+0..9: tang dau | Ctrl+Shift+0..9: tang cuoi', '[ / ]: zoom dau | Shift+[ / ]: zoom cuoi']
         elif self.mode == 'stairs':
             info += [', / .: doi tang di | Shift+, / Shift+.: doi tang den']
         for index, line in enumerate(info):
@@ -550,8 +633,8 @@ class PixelRuinsTuner:
             self._draw_modal('HUONG DAN TUNER MAP', [
                 '1: dat texture trang tri (khong tu tao va cham).',
                 '2: keo vung DO de ve collider, nhan vat khong the di vao.',
-                '3: keo vung XANH de danh dau tung tang; [ ] chinh zoom cua tang.',
-                '4: keo vung CAM de danh dau cau thang va gan tang di/den.',
+                '4: keo box CAM phu cau thang. Vao box de chuyen qua lai giua hai tang.',
+                'Shift+so gan tang goc; Ctrl+Shift+so gan tang dich; [ ] chinh zoom.',
                 '5: keo vung TIM phu len loi ham de khoet collider va cho phep di qua.',
                 '6: keo tung line CYAN lam vien map; nhan vat khong the cat qua line.',
                 'Keo o vung trong de tao. Keo vung da co de di chuyen. Ctrl = 1 pixel.',
@@ -560,6 +643,16 @@ class PixelRuinsTuner:
             ])
         elif self.exit_confirm:
             self._draw_modal('LUU LAYOUT TRUOC KHI THOAT?', ['S: Luu JSON va thoat.', 'D: Thoat khong luu.', 'Esc: Quay lai tuner.'], (255, 170, 110))
+        if self.floor_picker is not None:
+            panel = pygame.Rect(992, 522, 276, 160)
+            pygame.draw.rect(self.screen, (28, 35, 48), panel, border_radius=6)
+            pygame.draw.rect(self.screen, (255, 165, 65), panel, 2, border_radius=6)
+            self._draw_text(f"Chon tang cho dau {self.floor_picker['end']} (0-5)", 1002, 534, (255, 220, 150), True)
+            for level, rect in self._floor_picker_rects().items():
+                pygame.draw.rect(self.screen, (70, 86, 110), rect, border_radius=4)
+                pygame.draw.rect(self.screen, (210, 225, 240), rect, 1, border_radius=4)
+                label = self.font.render(str(level), True, (255, 255, 255))
+                self.screen.blit(label, label.get_rect(center=rect.center))
         pygame.display.flip()
 
     def run(self):

@@ -107,6 +107,14 @@ class CollisionMapPreview:
             pygame.draw.line(self.screen, (80, 235, 255),
                              ((start[0] - self.camera.x) * self.zoom, (start[1] - self.camera.y) * self.zoom),
                              ((end[0] - self.camera.x) * self.zoom, (end[1] - self.camera.y) * self.zoom), 3)
+        for line in self.map_data.stairs:
+            rect = self._screen_rect(line['rect'])
+            pygame.draw.rect(self.screen, (255, 165, 65), rect, 3)
+            self.screen.blit(self.small_font.render(f"T{line['from_floor']} <-> T{line['to_floor']}", True, (255, 165, 65)), (rect.x + 4, rect.y + 4))
+            for end_line, color in ((line['start_line'], (85, 255, 170)), (line['end_line'], (255, 95, 145))):
+                start = (round((end_line[0][0] - self.camera.x) * self.zoom), round((end_line[0][1] - self.camera.y) * self.zoom))
+                end = (round((end_line[1][0] - self.camera.x) * self.zoom), round((end_line[1][1] - self.camera.y) * self.zoom))
+                pygame.draw.line(self.screen, color, start, end, 5)
         for rect in self.colliders:
             pygame.draw.rect(self.screen, (255, 235, 90), self._screen_rect(rect), 1)
 

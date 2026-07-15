@@ -44,7 +44,7 @@ class PixelRuinsMap:
         self.collision_zones = self._rectangles_from_layout('collision_zones')
         self.tunnels = self._rectangles_from_layout('tunnels')
         self.map_boundaries = self._lines_from_layout('map_boundaries')
-        self.floors = self._regions_from_layout('floors')
+        self.stairs = self._stairs_from_layout()
         self.stairs = self._regions_from_layout('stairs')
         self.wall_rects.extend(self._cut_tunnels_from_colliders(self.collision_zones, self.tunnels))
         self.wall_rects.extend(self._line_collision_rects(self.map_boundaries))
@@ -172,10 +172,54 @@ class PixelRuinsMap:
             remaining = next_remaining
         return remaining
 
-    def floor_at(self, world_position):
-        """Return the last matching floor so smaller overlay zones win."""
-        floor = None
-        for candidate in self.floors:
-            if candidate['rect'].collidepoint(world_position):
-                floor = candidate
-        return floor
+    def _stairs_from_layout(self):
+        stairs = []
+        for stair in self.layout.get('stairs', []):
+            if not isinstance(stair, dict):
+                continue
+            rect_data = stair.get('rect', [])
+            if not (isinstance(rect_data, list) and len(rect_data) == 4):
+                continue
+            rect = pygame.Rect(*(int(value) for value in rect_data))
+            if rect.width <= 0 or rect.height <= 0:
+                continue
+            start_line = stair.get('start_line')
+            end_line = stair.get('end_line')
+            if not (isinstance(start_line, list) and isinstance(end_line, list) and len(start_line) == len(end_line) == 2):
+                start = tuple(stair.get('start', (rect.left, rect.centery)))
+                end = tuple(stair.get('end', (rect.right, rect.centery)))
+                if abs(end[0] - start[0]) >= abs(end[1] - start[1]):
+                    start_line = [[start[0], rect.top], [start[0], rect.bottom]]
+                    end_line = [[end[0], rect.top], [end[0], rect.bottom]]
+                else:
+                    start_line = [[rect.left, start[1]], [rect.right, start[1]]]
+                    end_line = [[rect.left, end[1]], [rect.right, end[1]]]
+            stairs.append({
+                'rect': rect,
+                'start_line': tuple(tuple(int(value) for value in point) for point in start_line),
+                'end_line': tuple(tuple(int(value) for value in point) for point in end_line),
+                'from_floor': max(0, int(stair.get('from_floor', 1))),
+                'to_floor': max(0, int(stair.get('to_floor', 2))),
+                'from_zoom': max(0.70, min(2.40, float(stair.get('from_zoom', 1.30)))),
+                'to_zoom': max(0.70, min(2.40, float(stair.get('to_zoom', 1.30)))),
+            })
+        return stairs
+
+    @staticmethod
+    def _segments_intersect(a, b, c, d):
+        def orient(p, q, r):
+            return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+        ab_c, ab_d = orient(a, b, c), orient(a, b, d)
+        cd_a, cd_b = orient(c, d, a), orient(c, d, b)
+        return (ab_c == 0 or ab_d == 0 or (ab_c > 0) != (ab_d > 0)) and (cd_a == 0 or cd_b == 0 or (cd_a > 0) != (cd_b > 0))
+
+    def stair_end_line_crossed(self, previous_point, current_point):
+        """Return the floor selected by crossing a stair's start/end line."""
+        for stair in self.stairs:
+            for line, floor_key, zoom_key in (
+                (stair['start_line'], 'from_floor', 'from_zoom'),
+                (stair['end_line'], 'to_floor', 'to_zoom'),
+            ):
+                if self._segments_intersect(previous_point, current_point, line[0], line[1]):
+                    return {'floor': stair[floor_key], 'zoom': stair[zoom_key]}
+        return None
