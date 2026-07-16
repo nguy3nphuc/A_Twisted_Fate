@@ -48,6 +48,7 @@ class PixelRuinsMap:
         self.map_boundaries = self._lines_from_layout('map_boundaries')
         self.stairs = self._stairs_from_layout()
         self.stairs = self._regions_from_layout('stairs')
+        self.floor_connections = self._build_floor_connections()
         self.wall_rects.extend(self._cut_tunnels_from_colliders(self.collision_zones, self.tunnels))
         self.wall_rects.extend(self._line_collision_rects(self.map_boundaries))
         self._draw()
@@ -160,6 +161,37 @@ class PixelRuinsMap:
             copy.setdefault('id', index + 1)
             regions.append(copy)
         return regions
+
+    @staticmethod
+    def _line_midpoint(line):
+        return ((line[0][0] + line[1][0]) // 2, (line[0][1] + line[1][1]) // 2)
+
+    def _floor_near_point(self, point, expected_floor):
+        """Find the authored floor region immediately beside a stair end."""
+        candidates = [
+            floor for floor in self.floors
+            if int(floor.get('floor', 0)) == int(expected_floor)
+            and floor['rect'].inflate(24, 24).collidepoint(point)
+        ]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda floor: pygame.math.Vector2(floor['rect'].center).distance_to(point))
+
+    def _build_floor_connections(self):
+        """Connect only floor regions that meet at opposite ends of one stair."""
+        connections = set()
+        for stair in self.stairs:
+            start_line, end_line = stair.get('start_line'), stair.get('end_line')
+            if not (isinstance(start_line, list) and isinstance(end_line, list) and len(start_line) == len(end_line) == 2):
+                continue
+            start = self._floor_near_point(self._line_midpoint(start_line), stair.get('from_floor', 0))
+            end = self._floor_near_point(self._line_midpoint(end_line), stair.get('to_floor', 0))
+            if start is not None and end is not None:
+                connections.add(frozenset((start['id'], end['id'])))
+        return connections
+
+    def floor_regions_connected(self, first_id, second_id):
+        return frozenset((first_id, second_id)) in self.floor_connections
 
     def _lines_from_layout(self, key):
         lines = []

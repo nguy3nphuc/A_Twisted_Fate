@@ -260,6 +260,20 @@ class AttackHitbox(pygame.sprite.Sprite):
     def __init__(self, owner, rect, damage=10, duration=150):
         super().__init__()
         self.owner = owner
+        rect = pygame.Rect(rect)
+        # Phase 4 draws smaller top-down characters. Keep normal melee range
+        # horizontally, but reduce vertical attack volume to match the swing.
+        height_ratio = float(getattr(owner, 'phase4_attack_hitbox_height_ratio', 1.0))
+        if height_ratio != 1.0:
+            new_height = max(8, round(rect.height * height_ratio))
+            rect.y += (rect.height - new_height) // 2
+            rect.height = new_height
+        rect.y += int(getattr(owner, 'phase4_attack_hitbox_y_offset', 0))
+        # A Phase 4 melee box begins at the pivot by default. Pull it back
+        # toward its owner so its near edge overlaps the character naturally.
+        overlap = int(getattr(owner, 'phase4_attack_hitbox_overlap', 0))
+        if overlap:
+            rect.x -= overlap * (1 if getattr(owner, 'facing', 1) >= 0 else -1)
         self.image = pygame.Surface((rect[2], rect[3]), pygame.SRCALPHA)
         self.image.fill((255, 0, 0, 80))
         self.rect = pygame.Rect(rect)

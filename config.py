@@ -34,6 +34,18 @@ ARCHER_ARROW_CONFIG = {
     },
 }
 
+# Picked skill charges. Change only these values to set how many times a
+# dropped skill can be used: 1 = consumable, 2/3 = reusable that many times.
+SKILL_USE_LIMITS = {
+    'default': 1,
+    # Example overrides:
+    # 'fire': 2,
+    # 'holy': 3,
+}
+
+# Shared team score awarded once whenever an enemy dies.
+TEAM_SCORE_PER_KILL = 10
+
 # Goblin Asset Paths
 GOBLIN_TANK_DIR = "assets/monsters/goblin_tank"
 GOBLIN_WARRIOR_DIR = "assets/monsters/goblin_warrior"
@@ -240,6 +252,19 @@ PIXEL_RUINS_TUNNEL_ENTITY_ALPHA = 115
 # the full combat hurtbox, which keeps top-down wall movement natural.
 PIXEL_RUINS_FOOTBOX_WIDTH_RATIO = 0.70
 PIXEL_RUINS_FOOTBOX_HEIGHT_RATIO = 0.28
+# Combat hitbox is visually fitted to the reduced map sprite; it remains
+# independent from the smaller movement footprint above.
+PIXEL_RUINS_COMBAT_HITBOX_WIDTH_RATIO = 0.90
+PIXEL_RUINS_COMBAT_HITBOX_HEIGHT_RATIO = 0.82
+PIXEL_RUINS_PLAYER_SPEED_MULTIPLIER = 1.60
+PIXEL_RUINS_ATTACK_HITBOX_HEIGHT_RATIO = 0.55
+# Shift normal melee boxes down toward the hands/feet in the top-down map.
+PIXEL_RUINS_ATTACK_HITBOX_Y_OFFSET = 24
+# Pull melee hit boxes back over the attacker in the enlarged Pixel Ruins map.
+PIXEL_RUINS_ATTACK_HITBOX_OVERLAP = 28
+# Grid settings for A* navigation used by enemies in the Pixel Ruins map.
+PIXEL_RUINS_PATH_CELL_SIZE = 24
+PIXEL_RUINS_PATH_REPLAN_MS = 450
 
 
 # Skill drop tuning by enemy tier.

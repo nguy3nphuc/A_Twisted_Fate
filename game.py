@@ -4,6 +4,7 @@ import math
 import random
 import os
 import json
+import heapq
 import config as config_module
 import entities as entities_module
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ from config import (WIDTH, HEIGHT, FPS, MAP_IMAGE, MIN_Y, MAX_Y,
                      CAMERA_SHAKE_INTENSITY, CAMERA_SHAKE_DURATION,
                      PLAYER_RESOURCE_PRESETS, PLAYER_RESOURCE_REGEN_PER_MS,
                      SKILL_MANA_COST, DEFAULT_ARMOR_REDUCTION_PCT,
-                     SKILL_EFFECT_CONFIG, SKILL_DROP_CONFIG,
+                     SKILL_EFFECT_CONFIG, SKILL_DROP_CONFIG, SKILL_USE_LIMITS, TEAM_SCORE_PER_KILL,
                      SKILL_COMBAT_CONFIG,
                      ABILITY_VIAL_DROP_CHANCE, ABILITY_MAX_LEVEL,
                      ABILITY_ATTACK_BONUS_PER_LEVEL, ABILITY_ARMOR_BONUS_PER_LEVEL,
@@ -22,12 +23,22 @@ from config import (WIDTH, HEIGHT, FPS, MAP_IMAGE, MIN_Y, MAX_Y,
                      BERSERK_DAMAGE_MULTIPLIER, BERSERK_ARMOR_EFFECTIVENESS_MULTIPLIER,
                      HOLY_EFFECT_DURATION_MS, PIXEL_RUINS_CAMERA_ZOOM,
                      PIXEL_RUINS_ENTITY_SCALE, PIXEL_RUINS_TUNNEL_ENTITY_ALPHA,
-                     PIXEL_RUINS_FOOTBOX_WIDTH_RATIO, PIXEL_RUINS_FOOTBOX_HEIGHT_RATIO)
+                     PIXEL_RUINS_FOOTBOX_WIDTH_RATIO, PIXEL_RUINS_FOOTBOX_HEIGHT_RATIO,
+                     PIXEL_RUINS_COMBAT_HITBOX_WIDTH_RATIO, PIXEL_RUINS_COMBAT_HITBOX_HEIGHT_RATIO,
+                     PIXEL_RUINS_PLAYER_SPEED_MULTIPLIER, PIXEL_RUINS_ATTACK_HITBOX_HEIGHT_RATIO,
+                     PIXEL_RUINS_ATTACK_HITBOX_Y_OFFSET, PIXEL_RUINS_ATTACK_HITBOX_OVERLAP,
+                     PIXEL_RUINS_PATH_CELL_SIZE, PIXEL_RUINS_PATH_REPLAN_MS)
 from entities import (Knight, Archer, Lizardman, Cyclop, Kobold, Fireworm, DamageNumber,
                        GoblinWarrior, GoblinSpearman, GoblinTank,
                        FatCultist, DeathBringer,
                        DashSmoke, UltimateEffect, KnightUltimateShockwave, BloodVFX, HitVFX,
                        HealthPotion, AbilityVial, BerserkVial, SkillIcon)
+
+
+PHASE4_FLOOR_COLORS = {
+    0: (185, 190, 200), 1: (70, 200, 255), 2: (255, 170, 65),
+    3: (190, 110, 255), 4: (80, 225, 145), 5: (255, 105, 170),
+}
 
 
 class SkillEffect(pygame.sprite.Sprite):
@@ -977,6 +988,13 @@ class Game:
     def _skill_mana_cost(self, skill_name):
         return int(SKILL_MANA_COST.get(skill_name, 10))
 
+    @staticmethod
+    def _skill_entry_name(skill_entry):
+        return skill_entry.get('name', '') if isinstance(skill_entry, dict) else skill_entry
+
+    def _skill_use_limit(self, skill_name):
+        return max(1, int(SKILL_USE_LIMITS.get(skill_name, SKILL_USE_LIMITS.get('default', 1))))
+
     def _skill_combat_value(self, skill_name, key, default=None):
         skill_cfg = SKILL_COMBAT_CONFIG.get(skill_name, {})
         return skill_cfg.get(key, default)
@@ -1068,7 +1086,8 @@ class Game:
             return
 
         idx = max(0, min(getattr(player, 'target_skill_idx', 0), len(player.skills) - 1))
-        chosen_skill = player.skills[idx]
+        skill_entry = player.skills[idx]
+        chosen_skill = self._skill_entry_name(skill_entry)
         if not self._try_spend_player_mana(player, chosen_skill):
             return
 
@@ -1096,6 +1115,19 @@ class Game:
         else:
             # Activation VFX around the player.
             self._spawn_skill_vfx(player.active_skill, player.hurtbox.centerx, player.hurtbox.centery, getattr(player, 'facing', 1))
+
+        # Reduce the configurable charge count only after a successful cast.
+        # Older string entries remain compatible and behave as one-use skills.
+        remaining_uses = int(skill_entry.get('uses', 1)) - 1 if isinstance(skill_entry, dict) else 0
+        if isinstance(skill_entry, dict):
+            skill_entry['uses'] = remaining_uses
+        if remaining_uses <= 0:
+            player.skills.pop(idx)
+        player.target_skill_idx = min(idx, max(0, len(player.skills) - 1))
+        # Holy is the only timed effect that must remain active after its item
+        # is consumed. Other skills have already spawned their one-shot effect.
+        if chosen_skill != 'holy':
+            player.active_skill = None
 
     def _spawn_skill_vfx(self, skill_name, x, y, facing=1):
         vfx = SkillEffect(skill_name, x, y, facing=facing)
@@ -1502,7 +1534,9 @@ class Game:
         if skill == 'holy' and pygame.time.get_ticks() >= getattr(player, 'holy_effect_until', 0):
             player.active_skill = None
             return None
-        if skill not in getattr(player, 'skills', []):
+        if skill == 'holy':
+            return skill
+        if skill not in [self._skill_entry_name(entry) for entry in getattr(player, 'skills', [])]:
             player.active_skill = None
             return None
         return skill
@@ -1737,6 +1771,7 @@ class Game:
 
     def load(self):
         # sprite groups
+        self.team_score = 0
         self.all_sprites = pygame.sprite.Group()
         self.enemies = pygame.sprite.Group()
         self.potions = pygame.sprite.Group()
@@ -1865,9 +1900,23 @@ class Game:
         # collision view visible by default. F3 can hide it during play.
         self.DEBUG_DRAW = self.selected_phase == 4
 
-    def _resolve_map_collision(self, entity, previous_rect, previous_hurtbox):
+    def _move_phase4_entity_footbox_to(self, entity, target_footbox):
+        """Move every map-relevant box together, preserving sprite alignment."""
+        footbox = getattr(entity, 'map_footbox', None)
+        if footbox is None:
+            return
+        dx, dy = target_footbox.x - footbox.x, target_footbox.y - footbox.y
+        entity.rect.x += dx
+        entity.rect.y += dy
+        entity.hurtbox.x += dx
+        entity.hurtbox.y += dy
+        footbox.x += dx
+        footbox.y += dy
+
+    def _resolve_map_collision(self, entity, previous_footbox):
         """Keep an entity out of walls while allowing natural wall sliding."""
-        if not hasattr(entity, 'hurtbox'):
+        footbox = getattr(entity, 'map_footbox', None)
+        if footbox is None:
             return
         walls = self.map_collision_rects + self._entity_tunnel_side_walls(entity)
         if not walls:
@@ -1875,40 +1924,195 @@ class Game:
         # A newly tuned layout can be reloaded while an entity is already
         # inside a marker collider. Do not trap it forever: let it move until
         # it exits, then apply normal blocking again on later wall entries.
-        if any(previous_hurtbox.colliderect(wall) for wall in walls):
+        if any(previous_footbox.colliderect(wall) for wall in walls):
             return
-        if not any(entity.hurtbox.colliderect(wall) for wall in walls):
+        if not any(footbox.colliderect(wall) for wall in walls):
             return
 
-        current_rect = entity.rect.copy()
-        current_hurtbox = entity.hurtbox.copy()
+        current_footbox = footbox.copy()
+
+        def move_to(target):
+            self._move_phase4_entity_footbox_to(entity, target)
 
         # First cancel horizontal movement only. If this clears the collision,
         # vertical movement remains, so the entity slides along the wall.
-        entity.rect.x = previous_rect.x
-        entity.hurtbox.x = previous_hurtbox.x
-        if not any(entity.hurtbox.colliderect(wall) for wall in walls):
+        move_to(pygame.Rect(previous_footbox.x, current_footbox.y, footbox.width, footbox.height))
+        if not any(footbox.colliderect(wall) for wall in walls):
             return
 
         # Otherwise restore X and cancel vertical movement only.
-        entity.rect = current_rect
-        entity.hurtbox = current_hurtbox
-        entity.rect.y = previous_rect.y
-        entity.hurtbox.y = previous_hurtbox.y
-        if not any(entity.hurtbox.colliderect(wall) for wall in walls):
+        move_to(pygame.Rect(current_footbox.x, previous_footbox.y, footbox.width, footbox.height))
+        if not any(footbox.colliderect(wall) for wall in walls):
             return
 
         # Movement entered a closed corner: restore the prior safe position.
-        entity.rect = previous_rect
-        entity.hurtbox = previous_hurtbox
+        move_to(previous_footbox)
 
-    def _fit_phase4_hurtbox(self, entity):
-        """Use a compact foot-level collision box in the top-down map."""
+    def _phase4_path_cell_open(self, cell, footprint_size):
+        """Whether an A* grid cell can contain this enemy's map footprint."""
+        cache = getattr(self, '_phase4_path_cell_cache', None)
+        if cache is None:
+            cache = self._phase4_path_cell_cache = {}
+        cache_key = (cell, tuple(footprint_size))
+        if cache_key in cache:
+            return cache[cache_key]
+        size = PIXEL_RUINS_PATH_CELL_SIZE
+        x, y = cell[0] * size + size // 2, cell[1] * size + size // 2
+        if x < 0 or y < 0 or x >= self.world_width or y >= self.world_height:
+            cache[cache_key] = False
+            return False
+        footprint = pygame.Rect(0, 0, *footprint_size)
+        footprint.center = (x, y)
+        cache[cache_key] = not any(footprint.colliderect(wall) for wall in self.map_collision_rects)
+        return cache[cache_key]
+
+    def _phase4_nearest_open_cell(self, cell, footprint_size, radius=5):
+        if self._phase4_path_cell_open(cell, footprint_size):
+            return cell
+        for distance in range(1, radius + 1):
+            for dx in range(-distance, distance + 1):
+                for dy in (-distance, distance):
+                    candidate = (cell[0] + dx, cell[1] + dy)
+                    if self._phase4_path_cell_open(candidate, footprint_size):
+                        return candidate
+            for dy in range(-distance + 1, distance):
+                for dx in (-distance, distance):
+                    candidate = (cell[0] + dx, cell[1] + dy)
+                    if self._phase4_path_cell_open(candidate, footprint_size):
+                        return candidate
+        return None
+
+    def _phase4_find_path(self, start_point, goal_point, footprint_size):
+        """Return an A* route, merging it into the shared route network."""
+        size = PIXEL_RUINS_PATH_CELL_SIZE
+        start = self._phase4_nearest_open_cell((int(start_point[0] // size), int(start_point[1] // size)), footprint_size)
+        goal = self._phase4_nearest_open_cell((int(goal_point[0] // size), int(goal_point[1] // size)), footprint_size)
+        if start is None or goal is None:
+            return []
+        # One route tree is shared by every enemy with this target cell and
+        # footprint.  Once an A* search reaches any existing branch, it joins
+        # that branch instead of searching all the way to the player again.
+        networks = getattr(self, '_phase4_path_networks', None)
+        if networks is None:
+            networks = self._phase4_path_networks = {}
+        network_key = (goal, tuple(footprint_size))
+        next_cell = networks.setdefault(network_key, {goal: None})
+
+        def route_from(cell):
+            route, seen = [], set()
+            while cell in next_cell and next_cell[cell] is not None and cell not in seen:
+                seen.add(cell)
+                cell = next_cell[cell]
+                route.append((cell[0] * size + size // 2, cell[1] * size + size // 2))
+            return route
+
+        if start in next_cell:
+            return route_from(start)
+        frontier = [(0, 0, start)]
+        came_from, cost = {start: None}, {start: 0}
+        sequence = 0
+        directions = ((1, 0, 1), (-1, 0, 1), (0, 1, 1), (0, -1, 1),
+                      (1, 1, 1.414), (1, -1, 1.414), (-1, 1, 1.414), (-1, -1, 1.414))
+        while frontier:
+            _, _, current = heapq.heappop(frontier)
+            if current == goal or current in next_cell:
+                break
+            for dx, dy, step_cost in directions:
+                nxt = (current[0] + dx, current[1] + dy)
+                if not self._phase4_path_cell_open(nxt, footprint_size):
+                    continue
+                # Never cut diagonally through a wall corner.
+                if dx and dy and (not self._phase4_path_cell_open((current[0] + dx, current[1]), footprint_size)
+                                  or not self._phase4_path_cell_open((current[0], current[1] + dy), footprint_size)):
+                    continue
+                new_cost = cost[current] + step_cost
+                if new_cost >= cost.get(nxt, float('inf')):
+                    continue
+                cost[nxt], came_from[nxt] = new_cost, current
+                sequence += 1
+                heuristic = math.hypot(goal[0] - nxt[0], goal[1] - nxt[1])
+                heapq.heappush(frontier, (new_cost + heuristic, sequence, nxt))
+        if current not in next_cell:
+            return []
+        # Wire the new branch into the shared tree.  All subsequent enemies
+        # that reach one of these cells immediately reuse its remaining path.
+        branch = []
+        joined = current
+        while current != start:
+            branch.append(current)
+            current = came_from[current]
+        branch.reverse()
+        if branch:
+            next_cell[start] = branch[0]
+            for cell, following in zip(branch, branch[1:]):
+                next_cell[cell] = following
+            if joined == goal:
+                next_cell[goal] = None
+        return route_from(start)
+
+    def _phase4_direct_path_is_clear(self, start, goal, footprint_size):
+        distance = pygame.math.Vector2(goal).distance_to(start)
+        steps = max(1, int(distance / max(6, PIXEL_RUINS_PATH_CELL_SIZE // 2)))
+        footprint = pygame.Rect(0, 0, *footprint_size)
+        for step in range(1, steps + 1):
+            progress = step / steps
+            footprint.center = (round(start[0] + (goal[0] - start[0]) * progress), round(start[1] + (goal[1] - start[1]) * progress))
+            if any(footprint.colliderect(wall) for wall in self.map_collision_rects):
+                return False
+        return True
+
+    def _update_phase4_enemy_path(self, enemy, target, previous_footbox):
+        """Replace blocked straight-line pursuit with a cached A* shortest route."""
+        if self.selected_phase != 4 or not hasattr(enemy, 'map_footbox'):
+            return
+        state = getattr(getattr(enemy, 'animator', None), 'state', '')
+        if state.startswith('attack') or state in ('hurt', 'death', 'dash_special'):
+            return
+        start, goal = previous_footbox.center, target.map_footbox.center
+        now = pygame.time.get_ticks()
+        goal_cell = (goal[0] // PIXEL_RUINS_PATH_CELL_SIZE, goal[1] // PIXEL_RUINS_PATH_CELL_SIZE)
+        if (goal_cell != getattr(enemy, '_phase4_direct_check_goal', None)
+                or now >= getattr(enemy, '_phase4_direct_check_at', 0)):
+            enemy._phase4_direct_path_clear = self._phase4_direct_path_is_clear(start, goal, previous_footbox.size)
+            enemy._phase4_direct_check_goal = goal_cell
+            enemy._phase4_direct_check_at = now + 120
+        if getattr(enemy, '_phase4_direct_path_clear', False):
+            enemy._phase4_path = []
+            enemy._phase4_path_ready = False
+            return
+        # Undo the AI's blocked straight-line step, then advance exactly one
+        # short step toward the next A* node.
+        self._move_phase4_entity_footbox_to(enemy, previous_footbox)
+        path = getattr(enemy, '_phase4_path', [])
+        if (not getattr(enemy, '_phase4_path_ready', False)
+                or getattr(enemy, '_phase4_path_goal', None) != goal_cell
+                or now >= getattr(enemy, '_phase4_path_replan_at', 0)):
+            path = self._phase4_find_path(start, goal, previous_footbox.size)
+            enemy._phase4_path = path
+            enemy._phase4_path_ready = True
+            enemy._phase4_path_goal = goal_cell
+            enemy._phase4_path_replan_at = now + PIXEL_RUINS_PATH_REPLAN_MS
+        while path and pygame.math.Vector2(enemy.map_footbox.center).distance_to(path[0]) < 5:
+            path.pop(0)
+        if not path:
+            return
+        direction = pygame.math.Vector2(path[0]) - enemy.map_footbox.center
+        if direction.length_squared() == 0:
+            return
+        direction = direction.normalize()
+        step = min(float(getattr(enemy, 'speed', 2)), pygame.math.Vector2(path[0]).distance_to(enemy.map_footbox.center))
+        moved = enemy.map_footbox.copy()
+        moved.x += round(direction.x * step)
+        moved.y += round(direction.y * step)
+        self._move_phase4_entity_footbox_to(enemy, moved)
+        if abs(direction.x) > 0.1:
+            enemy.facing = 1 if direction.x > 0 else -1
+
+    def _update_phase4_footbox(self, entity):
+        """Create a small map-only footprint without changing combat hurtbox."""
         if self.selected_phase != 4 or not hasattr(entity, 'hurtbox'):
             return
-        if not hasattr(entity, '_phase4_base_hurtbox_size'):
-            entity._phase4_base_hurtbox_size = entity.hurtbox.size
-        base_width, base_height = entity._phase4_base_hurtbox_size
+        base_width, base_height = getattr(entity, '_phase4_base_combat_hurtbox_size', entity.hurtbox.size)
         # The map needs a footprint, not a full body combat box. It is scaled
         # for the reduced Phase 4 sprite and anchored at the feet.
         scale = PIXEL_RUINS_ENTITY_SCALE / max(0.01, self.world_zoom)
@@ -1916,17 +2120,44 @@ class Game:
             max(12, round(base_width * scale * PIXEL_RUINS_FOOTBOX_WIDTH_RATIO)),
             max(10, round(base_height * scale * PIXEL_RUINS_FOOTBOX_HEIGHT_RATIO)),
         )
+        if not hasattr(entity, 'map_footbox'):
+            entity.map_footbox = pygame.Rect(0, 0, *desired_size)
+        entity.map_footbox.size = desired_size
+        entity.map_footbox.midbottom = entity.hurtbox.midbottom
+
+    def _update_phase4_combat_hitbox(self, entity):
+        """Fit combat HIT box to the scaled map sprite, independently of FOOT."""
+        if self.selected_phase != 4 or not hasattr(entity, 'hurtbox'):
+            return
+        if not hasattr(entity, '_phase4_base_combat_hurtbox_size'):
+            entity._phase4_base_combat_hurtbox_size = entity.hurtbox.size
+        entity.phase4_attack_hitbox_height_ratio = PIXEL_RUINS_ATTACK_HITBOX_HEIGHT_RATIO
+        entity.phase4_attack_hitbox_y_offset = PIXEL_RUINS_ATTACK_HITBOX_Y_OFFSET
+        entity.phase4_attack_hitbox_overlap = PIXEL_RUINS_ATTACK_HITBOX_OVERLAP
+        base_width, base_height = entity._phase4_base_combat_hurtbox_size
+        scale = PIXEL_RUINS_ENTITY_SCALE / max(0.01, self.world_zoom)
+        desired_size = (
+            max(16, round(base_width * scale * PIXEL_RUINS_COMBAT_HITBOX_WIDTH_RATIO)),
+            max(20, round(base_height * scale * PIXEL_RUINS_COMBAT_HITBOX_HEIGHT_RATIO)),
+        )
         if entity.hurtbox.size != desired_size:
             feet = entity.hurtbox.midbottom
             entity.hurtbox.size = desired_size
             entity.hurtbox.midbottom = feet
 
+    def _update_phase4_player_speed(self, player):
+        if self.selected_phase != 4 or not hasattr(player, 'speed'):
+            return
+        if not hasattr(player, '_phase4_base_speed'):
+            player._phase4_base_speed = player.speed
+        player.speed = player._phase4_base_speed * PIXEL_RUINS_PLAYER_SPEED_MULTIPLIER
+
     def _entity_is_in_tunnel(self, entity):
         """True only after the entity entered through a tunnel end line."""
-        if self.selected_phase != 4 or not self.pixel_ruins_map or not hasattr(entity, 'hurtbox'):
+        if self.selected_phase != 4 or not self.pixel_ruins_map or not hasattr(entity, 'map_footbox'):
             return False
         index = getattr(entity, '_phase4_tunnel_index', None)
-        return isinstance(index, int) and 0 <= index < len(self.pixel_ruins_map.tunnel_zones) and self.pixel_ruins_map.tunnel_zones[index]['rect'].collidepoint(entity.hurtbox.center)
+        return isinstance(index, int) and 0 <= index < len(self.pixel_ruins_map.tunnel_zones) and self.pixel_ruins_map.tunnel_zones[index]['rect'].collidepoint(entity.map_footbox.center)
 
     def _entity_tunnel_side_walls(self, entity):
         if self.selected_phase != 4 or not self.pixel_ruins_map:
@@ -1938,28 +2169,65 @@ class Game:
 
     def _update_tunnel_traversal(self, entity, previous_hurtbox):
         """Toggle underpass state only when crossing a tunnel A/B line."""
-        if self.selected_phase != 4 or not self.pixel_ruins_map or not hasattr(entity, 'hurtbox'):
+        if self.selected_phase != 4 or not self.pixel_ruins_map or not hasattr(entity, 'map_footbox'):
             return
-        index = self.pixel_ruins_map.tunnel_end_line_crossed(previous_hurtbox.center, entity.hurtbox.center)
+        index = self.pixel_ruins_map.tunnel_end_line_crossed(previous_hurtbox.center, entity.map_footbox.center)
         if index is not None:
             entity._phase4_tunnel_index = None if getattr(entity, '_phase4_tunnel_index', None) == index else index
 
     def _update_entity_region_floor(self, entity):
         """Record authored floor/tunnel membership for future map mechanics."""
-        if self.selected_phase != 4 or not self.pixel_ruins_map or not hasattr(entity, 'hurtbox'):
+        if self.selected_phase != 4 or not self.pixel_ruins_map or not hasattr(entity, 'map_footbox'):
             return
-        floor = self.pixel_ruins_map.floor_at(entity.hurtbox.center)
+        floor = self.pixel_ruins_map.floor_at(entity.map_footbox.center)
         entity.map_region_floor = int(floor.get('floor', 0)) if floor else None
+        entity.map_region_id = floor.get('id') if floor else None
         tunnel_index = getattr(entity, '_phase4_tunnel_index', None)
         if isinstance(tunnel_index, int) and 0 <= tunnel_index < len(self.pixel_ruins_map.tunnel_zones):
             entity.map_region_floor = self.pixel_ruins_map.tunnel_zones[tunnel_index]['floor']
+            entity.map_region_id = None
+
+    def _entity_combat_floor(self, entity):
+        """Return authored floor metadata, without restricting unmarked areas."""
+        if self.selected_phase != 4 or entity is None:
+            return None
+        floor = getattr(entity, 'map_region_floor', None)
+        if floor is None:
+            floor = getattr(entity, 'map_floor', None)
+        try:
+            return int(floor) if floor is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _projectile_floor_can_hit(self, owner, target):
+        """Same floor is valid; cross-floor fire is only one floor downward."""
+        if self.selected_phase != 4:
+            return True
+        owner_floor = self._entity_combat_floor(owner)
+        target_floor = self._entity_combat_floor(target)
+        # Keep areas that have not yet been marked as floors playable.
+        if owner_floor is None or target_floor is None:
+            return True
+        owner_region = getattr(owner, 'map_region_id', None)
+        target_region = getattr(target, 'map_region_id', None)
+        # Identical T1/T0 labels can exist in different places.  They are not
+        # automatically connected: a shot may cross only one actual stair.
+        if owner_region is not None and target_region is not None:
+            if owner_region == target_region:
+                return True
+            return (owner_floor == target_floor + 1
+                    and self.pixel_ruins_map.floor_regions_connected(owner_region, target_region))
+        # A tunnel has a floor number but is not a new floor region.  It may
+        # fight on its own level, but cannot create a long-range shortcut to
+        # another repeated T0/T1 area.
+        return owner_floor == target_floor
 
     def _update_player_stair_floor(self, player, previous_hurtbox):
         """Switch floor when a player crosses either end line of a stair box."""
         if self.selected_phase != 4 or not self.pixel_ruins_map:
             return
         reached = self.pixel_ruins_map.stair_end_line_crossed(
-            previous_hurtbox.center, player.hurtbox.center,
+            previous_hurtbox.center, player.map_footbox.center,
         )
         if reached is not None:
             player.map_floor = reached['floor']
@@ -1969,6 +2237,10 @@ class Game:
         """Reload tuner-authored Phase 4 collider/floor/tunnel data in place."""
         if self.selected_phase != 4:
             return
+        # Collider data changed: navigation caches must be rebuilt from the
+        # new layout instead of retaining routes through old walls.
+        self._phase4_path_cell_cache = {}
+        self._phase4_path_networks = {}
         self.pixel_ruins_map = PixelRuinsMap(WIDTH, HEIGHT)
         self.map = self.pixel_ruins_map.surface
         self.world_width, self.world_height = self.map.get_size()
@@ -2013,8 +2285,10 @@ class Game:
     def spawn_enemy(self):
         side = random.choice(['left', 'right'])
         if self.selected_phase == 4:
-            y = random.randint(80, self.world_height - 80)
-            x = 40 if side == 'left' else self.world_width - 40
+            spawn_position = self._phase4_enemy_spawn_position()
+            if spawn_position is None:
+                return
+            x, y = spawn_position
         else:
             y = random.randint(MIN_Y + 50, MAX_Y - 30)
             x = -40 if side == 'left' else WIDTH + 40
@@ -2058,6 +2332,30 @@ class Game:
 
         self.enemies.add(enemy)
         self.all_sprites.add(enemy)
+
+    def _phase4_enemy_spawn_position(self):
+        """Choose a safe enemy spawn strictly inside tuner-authored floor boxes."""
+        if not self.pixel_ruins_map:
+            return None
+        areas = [floor['rect'] for floor in self.pixel_ruins_map.floors]
+        # Before floor metadata is drawn, keep the arena playable by using the
+        # full overview as the spawn area. Authored floor boxes narrow this.
+        if not areas:
+            areas = [pygame.Rect(0, 0, self.world_width, self.world_height)]
+        living_players = [player for player in self.players if player.hp > 0]
+        for _ in range(80):
+            area = random.choice(areas)
+            if area.width < 32 or area.height < 32:
+                continue
+            x = random.randint(area.left + 16, area.right - 16)
+            y = random.randint(area.top + 16, area.bottom - 16)
+            footprint = pygame.Rect(x - 10, y - 6, 20, 12)
+            if any(footprint.colliderect(wall) for wall in self.map_collision_rects):
+                continue
+            if any(pygame.Vector2(player.hurtbox.center).distance_to((x, y)) < 150 for player in living_players):
+                continue
+            return x, y
+        return None
 
     def spawn_miniboss(self):
         """Spawn the phase's miniboss from the right side."""
@@ -2415,7 +2713,9 @@ class Game:
                 if event.key == pygame.K_r and all(player.hp <= 0 for player in self.players):
                     self.state = "SELECT"
                 # Skill target/use controls
-                if event.key in (pygame.K_0, pygame.K_KP0):
+                # P2 Magic Arrow: keep both main-row/Numpad 0 and a letter
+                # fallback because some keyboards report numpad 0 differently.
+                if event.key in (pygame.K_0, pygame.K_KP0, pygame.K_c):
                     self.cycle_archer_arrow()
                     continue
                 if len(self.players) > 0:
@@ -2433,17 +2733,22 @@ class Game:
     def update(self, dt):
         keys = pygame.key.get_pressed()
         self._update_player_passives(dt)
+        phase4_map = self.selected_phase == 4
         # update players
         for player in self.players:
-            self._fit_phase4_hurtbox(player)
-            previous_rect = player.rect.copy()
-            previous_hurtbox = player.hurtbox.copy()
+            if phase4_map:
+                self._update_phase4_player_speed(player)
+                self._update_phase4_combat_hitbox(player)
+                self._update_phase4_footbox(player)
+                previous_footbox = player.map_footbox.copy()
             player.update(dt, keys, self.groups)
-            self._fit_phase4_hurtbox(player)
-            self._resolve_map_collision(player, previous_rect, previous_hurtbox)
-            self._update_tunnel_traversal(player, previous_hurtbox)
-            self._update_player_stair_floor(player, previous_hurtbox)
-            self._update_entity_region_floor(player)
+            if phase4_map:
+                self._update_phase4_combat_hitbox(player)
+                self._update_phase4_footbox(player)
+                self._resolve_map_collision(player, previous_footbox)
+                self._update_tunnel_traversal(player, previous_footbox)
+                self._update_player_stair_floor(player, previous_footbox)
+                self._update_entity_region_floor(player)
 
         # update enemies
         for e in list(self.enemies):
@@ -2452,14 +2757,18 @@ class Game:
             if target is None:
                 continue
             self._apply_enemy_status_effects(e)
-            self._fit_phase4_hurtbox(e)
-            previous_rect = e.rect.copy()
-            previous_hurtbox = e.hurtbox.copy()
+            if phase4_map:
+                self._update_phase4_combat_hitbox(e)
+                self._update_phase4_footbox(e)
+                previous_footbox = e.map_footbox.copy()
             e.update(dt, target, self.groups)
-            self._fit_phase4_hurtbox(e)
-            self._resolve_map_collision(e, previous_rect, previous_hurtbox)
-            self._update_tunnel_traversal(e, previous_hurtbox)
-            self._update_entity_region_floor(e)
+            if phase4_map:
+                self._update_phase4_combat_hitbox(e)
+                self._update_phase4_footbox(e)
+                self._resolve_map_collision(e, previous_footbox)
+                self._update_phase4_enemy_path(e, target, previous_footbox)
+                self._update_tunnel_traversal(e, previous_footbox)
+                self._update_entity_region_floor(e)
 
         self._update_world_camera()
 
@@ -2566,6 +2875,8 @@ class Game:
             for enemy in self.enemies:
                 if enemy.hp <= 0:
                     continue
+                if not self._projectile_floor_can_hit(getattr(arrow, 'owner', None), enemy):
+                    continue
                 # Phase 1 - Vertical depth filter (projectile)
                 if math.fabs(arrow.floor_y - enemy.foot_y) > 50:
                     continue
@@ -2598,6 +2909,8 @@ class Game:
         for proj in list(self.water_projectiles):
             for enemy in self.enemies:
                 if enemy.hp <= 0:
+                    continue
+                if not self._projectile_floor_can_hit(getattr(proj, 'owner', None), enemy):
                     continue
                 if id(enemy) in proj.already_hit_targets:
                     continue
@@ -2633,6 +2946,8 @@ class Game:
             for enemy in self.enemies:
                 if enemy.hp <= 0:
                     continue
+                if not self._projectile_floor_can_hit(getattr(proj, 'owner', None), enemy):
+                    continue
                 if id(enemy) in proj.already_hit_targets:
                     continue
                 if math.fabs(proj.floor_y - enemy.foot_y) > 55:
@@ -2667,6 +2982,8 @@ class Game:
                                 break
                             if other is enemy or other.hp <= 0:
                                 continue
+                            if not self._projectile_floor_can_hit(getattr(proj, 'owner', None), other):
+                                continue
                             if math.fabs(other.foot_y - enemy.foot_y) > 75:
                                 continue
                             if abs(other.hurtbox.centerx - enemy.hurtbox.centerx) > 165:
@@ -2689,6 +3006,8 @@ class Game:
         for proj in list(self.water_blast_projectiles):
             for enemy in self.enemies:
                 if enemy.hp <= 0:
+                    continue
+                if not self._projectile_floor_can_hit(getattr(proj, 'owner', None), enemy):
                     continue
                 if id(enemy) in proj.already_hit_targets:
                     continue
@@ -2717,6 +3036,8 @@ class Game:
                         for other in self.enemies:
                             if other is enemy or other.hp <= 0:
                                 continue
+                            if not self._projectile_floor_can_hit(getattr(proj, 'owner', None), other):
+                                continue
                             if math.fabs(other.foot_y - enemy.foot_y) > 90:
                                 continue
                             if abs(other.hurtbox.centerx - enemy.hurtbox.centerx) > 130:
@@ -2744,6 +3065,8 @@ class Game:
         for proj in list(self.dark_projectiles):
             for enemy in self.enemies:
                 if enemy.hp <= 0:
+                    continue
+                if not self._projectile_floor_can_hit(getattr(proj, 'owner', None), enemy):
                     continue
                 if not self._is_dark_eligible_enemy(enemy):
                     continue
@@ -2780,6 +3103,8 @@ class Game:
             for enemy in self.enemies:
                 if enemy.hp <= 0:
                     continue
+                if not self._projectile_floor_can_hit(getattr(proj, 'owner', None), enemy):
+                    continue
                 if id(enemy) in proj.already_hit_targets:
                     continue
                 if math.fabs(proj.floor_y - enemy.foot_y) > 55:
@@ -2812,6 +3137,8 @@ class Game:
         for proj in list(self.acid_projectiles):
             for enemy in self.enemies:
                 if enemy.hp <= 0:
+                    continue
+                if not self._projectile_floor_can_hit(getattr(proj, 'owner', None), enemy):
                     continue
                 if id(enemy) in proj.already_hit_targets:
                     continue
@@ -2848,6 +3175,8 @@ class Game:
             for enemy in self.enemies:
                 if enemy.hp <= 0:
                     continue
+                if not self._projectile_floor_can_hit(getattr(beam, 'owner', None), enemy):
+                    continue
                 # Vertical depth filter
                 if math.fabs(beam.floor_y - enemy.foot_y) > 60:
                     continue
@@ -2875,6 +3204,8 @@ class Game:
         for proj in list(self.wind_projectiles):
             for enemy in self.enemies:
                 if enemy.hp <= 0:
+                    continue
+                if not self._projectile_floor_can_hit(getattr(proj, 'owner', None), enemy):
                     continue
                 if id(enemy) in proj.already_hit_targets:
                     continue
@@ -3031,6 +3362,8 @@ class Game:
             for enemy in self.enemies:
                 if not self._enemy_can_hit_enemy(owner, enemy):
                     continue
+                if not self._projectile_floor_can_hit(owner, enemy):
+                    continue
                 if math.fabs(proj.floor_y - enemy.foot_y) > 50:
                     continue
                 if not proj.rect.colliderect(enemy.hurtbox):
@@ -3054,6 +3387,8 @@ class Game:
             if player.hp > 0 and player.hurt_timer <= 0:
                 for proj in list(self.enemy_projectiles):
                     if self._is_enemy_zombie(getattr(proj, 'owner', None)):
+                        continue
+                    if not self._projectile_floor_can_hit(getattr(proj, 'owner', None), player):
                         continue
                     if math.fabs(proj.floor_y - player.foot_y) > 50:
                         continue
@@ -3079,6 +3414,12 @@ class Game:
                             hit_effect = HitVFX(player.hurtbox.centerx, player.hurtbox.centery, getattr(player, 'facing', 1), player.foot_y)
                             self.effects.add(hit_effect)
                         proj.kill()
+
+        # 5. Spawn potion
+        for enemy in self.enemies:
+            if enemy.hp <= 0 and not getattr(enemy, 'team_score_awarded', False):
+                enemy.team_score_awarded = True
+                self.team_score += TEAM_SCORE_PER_KILL
 
         # 5. Spawn potion
         for enemy in self.enemies:
@@ -3150,7 +3491,10 @@ class Game:
                     if player.hurtbox.colliderect(skill.rect):
                         # Max 3 stored skills per player.
                         if len(player.skills) < 3:
-                            player.skills.append(skill.skill_type)
+                            player.skills.append({
+                                'name': skill.skill_type,
+                                'uses': self._skill_use_limit(skill.skill_type),
+                            })
                             skill.kill()
 
     def _apply_magic_arrow_effect(self, arrow, enemy, dealt_damage):
@@ -3180,6 +3524,7 @@ class Game:
             candidates = [
                 other for other in self.enemies
                 if other is not enemy and other.hp > 0
+                and self._projectile_floor_can_hit(getattr(arrow, 'owner', None), other)
                 and abs(other.hurtbox.centerx - enemy.hurtbox.centerx) <= int(cfg['chain_enemy_x_range'])
                 and abs(other.foot_y - enemy.foot_y) <= int(cfg['chain_enemy_y_range'])
             ]
@@ -3326,8 +3671,12 @@ class Game:
                     pygame.draw.rect(self.screen, (255, 90, 90), screen_zone, 1)
                 for floor in self.pixel_ruins_map.floors:
                     floor_rect = world_rect_to_screen(floor['rect'])
-                    pygame.draw.rect(self.screen, (75, 185, 255), floor_rect, 2)
-                    self.screen.blit(pygame.font.SysFont('Consolas', 14, bold=True).render(f"T{floor.get('floor', 0)}", True, (75, 185, 255)), (floor_rect.x + 3, floor_rect.y + 3))
+                    floor_color = PHASE4_FLOOR_COLORS.get(int(floor.get('floor', 0)), PHASE4_FLOOR_COLORS[0])
+                    overlay = pygame.Surface(floor_rect.size, pygame.SRCALPHA)
+                    overlay.fill((*floor_color, 38))
+                    self.screen.blit(overlay, floor_rect.topleft)
+                    pygame.draw.rect(self.screen, floor_color, floor_rect, 2)
+                    self.screen.blit(pygame.font.SysFont('Consolas', 14, bold=True).render(f"T{floor.get('floor', 0)}", True, floor_color), (floor_rect.x + 3, floor_rect.y + 3))
                 # Purple: tunnel regions that remove collision from red zones.
                 for tunnel in self.pixel_ruins_map.tunnels:
                     pygame.draw.rect(self.screen, (190, 105, 255), world_rect_to_screen(tunnel), 2)
@@ -3352,16 +3701,22 @@ class Game:
                         pygame.draw.line(self.screen, color, start, end, 5)
                         self.screen.blit(debug_font.render(label, True, (20, 20, 20)), (start[0] + 4, start[1] + 4))
 
-            # Green: enemy hurtboxes; blue/orange: P1/P2 hurtboxes.
+            # HIT = combat hurtbox (full body). FOOT = map-movement footprint.
             for sprite in self.all_sprites:
                 if hasattr(sprite, 'hurtbox') and getattr(sprite, 'hp', 0) > 0:
                     r = sprite.hurtbox
-                    color = (0, 255, 0)
+                    hit_color = (80, 255, 110)
+                    foot_color = (255, 235, 80)
                     if sprite in self.players:
-                        color = (70, 210, 255) if sprite is self.players[0] else (255, 180, 65)
-                    pygame.draw.rect(self.screen, color, world_rect_to_screen(r), 2)
+                        foot_color = (70, 210, 255) if sprite is self.players[0] else (255, 180, 65)
+                        hit_color = (255, 110, 205)
+                    pygame.draw.rect(self.screen, hit_color, world_rect_to_screen(r), 2)
+                    if hasattr(sprite, 'map_footbox'):
+                        foot_rect = world_rect_to_screen(sprite.map_footbox)
+                        pygame.draw.rect(self.screen, foot_color, foot_rect, 2)
+                        self.screen.blit(pygame.font.SysFont('Consolas', 11, bold=True).render('FOOT', True, foot_color), (foot_rect.x, foot_rect.y - 12))
                     if hasattr(sprite, 'map_region_floor') and sprite.map_region_floor is not None:
-                        label = pygame.font.SysFont('Consolas', 13, bold=True).render(f"T{sprite.map_region_floor}", True, color)
+                        label = pygame.font.SysFont('Consolas', 13, bold=True).render(f"HIT T{sprite.map_region_floor}", True, hit_color)
                         self.screen.blit(label, (world_rect_to_screen(r).x, world_rect_to_screen(r).y - 14))
             # Red: player attack hitboxes
             for hb in self.attacks:
@@ -3376,7 +3731,7 @@ class Game:
                 pygame.draw.rect(self.screen, (0, 220, 255), world_rect_to_screen(wall), 2)
             if world_mode:
                 label = debug_font.render(
-                    f'DEBUG MAP  F3: hide | Red: zone | Cyan: active | Purple: tunnel | Yellow: boundary | Orange: stairs | Floor T{self.current_floor} | F5: reload ({len(self.map_collision_rects)})',
+                    f'DEBUG MAP  HIT: green/pink | FOOT: yellow/blue/orange | Red: zone | Cyan: active | Floor T{self.current_floor} | F5: reload ({len(self.map_collision_rects)})',
                     True, (255, 255, 255),
                 )
                 panel = pygame.Surface((min(WIDTH - 20, label.get_width() + 16), 26), pygame.SRCALPHA)
@@ -3407,7 +3762,10 @@ class Game:
         # HUD: Knight ultimate cooldown indicator
         if any(isinstance(player, Knight) and player.hp > 0 for player in self.players):
             self.draw_knight_ultimate_hud()
+        if any(isinstance(player, Archer) and player.hp > 0 for player in self.players):
+            self.draw_archer_ultimate_hud()
         self.draw_archer_arrow_hud()
+        self.draw_team_score_hud()
 
         # Boss HP bar
         if self.selected_phase == 1 and self.boss_spawned:
@@ -3538,7 +3896,7 @@ class Game:
         elif self._is_berserk_active(player):
             remaining = max(0.0, (player.berserk_until - pygame.time.get_ticks()) / 1000.0)
             ratio = max(0.0, min(1.0, remaining * 1000.0 / BERSERK_VIAL_DURATION_MS))
-            buff_y = y + 78
+            buff_y = y + 134
             pygame.draw.rect(self.screen, (55, 25, 25), (x, buff_y, w, 11))
             pygame.draw.rect(self.screen, (225, 60, 45), (x, buff_y, int(w * ratio), 11))
             pygame.draw.rect(self.screen, (255, 145, 105), (x, buff_y, w, 11), 1)
@@ -3548,7 +3906,7 @@ class Game:
         if self._active_passive(player) == 'holy':
             remaining = max(0.0, (player.holy_effect_until - pygame.time.get_ticks()) / 1000.0)
             ratio = max(0.0, min(1.0, remaining * 1000.0 / HOLY_EFFECT_DURATION_MS))
-            holy_y = y + (94 if self._is_berserk_active(player) else 78)
+            holy_y = y + (150 if self._is_berserk_active(player) else 134)
             pygame.draw.rect(self.screen, (55, 48, 18), (x, holy_y, w, 11))
             pygame.draw.rect(self.screen, (255, 210, 45), (x, holy_y, int(w * ratio), 11))
             pygame.draw.rect(self.screen, (255, 245, 170), (x, holy_y, w, 11), 1)
@@ -3556,59 +3914,101 @@ class Game:
             self.screen.blit(holy, (x + 6, holy_y - 2))
 
     def draw_knight_ultimate_hud(self):
-        """Draw a golden circular ultimate-cooldown indicator for the Knight.
-
-        Positioned just to the right of the HP bar.  When the ultimate is
-        ready the ring glows bright gold; while on cooldown a grey arc shows
-        the remaining wait time and a gold fill arc shows what has recharged.
-        """
+        """Draw the Knight ultimate in one reusable single-frame slot."""
         from config import KNIGHT_ULTIMATE_COOLDOWN
-        cx, cy = 240, 21   # centre of the indicator circle
-        radius  = 18
-        thickness = 4
-
         knight = next((player for player in self.players if isinstance(player, Knight)), None)
         if knight is None:
             return
-        cd = max(0.0, getattr(knight, 'ultimate_cooldown', 0))
-        ready = cd <= 0
+        icon = self._ultimate_hud_icon('assets/hero/knight/knight_ultimate.png', 44, 18)
+        self._draw_single_frame_slot(10, 84, knight.ultimate_cooldown, KNIGHT_ULTIMATE_COOLDOWN, 'ULT', '[L]', (255, 210, 55), icon)
 
-        if ready:
-            # Bright golden full ring + glow
-            pygame.draw.circle(self.screen, (255, 200, 40), (cx, cy), radius + 3, 1)
-            pygame.draw.circle(self.screen, (255, 200, 40), (cx, cy), radius, thickness + 1)
-            pygame.draw.circle(self.screen, (255, 240, 120), (cx, cy), radius - thickness, 0)
+    def _single_frame_image(self, size=46):
+        cache = getattr(self, '_single_frame_cache', {})
+        if size not in cache:
+            try:
+                image = pygame.image.load(os.path.join('assets', 'projectiles', 'single_frame.png')).convert_alpha()
+            except Exception:
+                image = pygame.Surface((size, size), pygame.SRCALPHA)
+                pygame.draw.rect(image, (238, 196, 130), image.get_rect(), 2)
+            cache[size] = pygame.transform.scale(image, (size, size))
+            self._single_frame_cache = cache
+        return cache[size]
+
+    def _ultimate_hud_icon(self, path, frame_count, frame_index):
+        """Extract one expressive frame from an Ultimate sprite sheet for HUD."""
+        cache = getattr(self, '_ultimate_hud_icon_cache', {})
+        key = (path, frame_count, frame_index)
+        if key not in cache:
+            try:
+                sheet = pygame.image.load(path).convert_alpha()
+                frame_width = sheet.get_width() // frame_count
+                frame_index = max(0, min(frame_count - 1, frame_index))
+                frame = sheet.subsurface(pygame.Rect(frame_index * frame_width, 0, frame_width, sheet.get_height())).copy()
+                bounds = frame.get_bounding_rect()
+                cache[key] = frame.subsurface(bounds).copy() if bounds.width and bounds.height else None
+            except Exception:
+                cache[key] = None
+            self._ultimate_hud_icon_cache = cache
+        return cache[key]
+
+    def _draw_single_frame_slot(self, x, y, cooldown, max_cooldown, icon_label, key_label, color, icon=None):
+        """Draw a single-frame ability slot with a compact cooldown shade."""
+        frame = self._single_frame_image()
+        slot = frame.get_rect(topleft=(x, y))
+        self.screen.blit(frame, slot)
+        if icon is not None:
+            icon = pygame.transform.smoothscale(icon, (26, 26))
+            self.screen.blit(icon, icon.get_rect(center=slot.center))
         else:
-            # Dark background disc
-            pygame.draw.circle(self.screen, (40, 40, 40), (cx, cy), radius, 0)
-            # Grey "empty" arc
-            pygame.draw.circle(self.screen, (100, 100, 100), (cx, cy), radius, thickness)
-            # Gold "filled" arc representing progress (drawn as a series of lines)
-            progress = 1.0 - cd / KNIGHT_ULTIMATE_COOLDOWN
-            import math as _m
-            start_angle = -_m.pi / 2          # 12 o'clock
-            sweep       = 2 * _m.pi * progress
-            steps       = max(1, int(60 * progress))
-            for i in range(steps + 1):
-                angle = start_angle + sweep * i / max(1, steps)
-                px = int(cx + radius * _m.cos(angle))
-                py = int(cy + radius * _m.sin(angle))
-                pygame.draw.circle(self.screen, (220, 160, 20), (px, py), thickness // 2 + 1)
+            icon_font = pygame.font.SysFont('Arial', 12, bold=True)
+            self.screen.blit(icon_font.render(icon_label, True, color), icon_font.render(icon_label, True, color).get_rect(center=slot.center))
+        remaining = max(0.0, float(cooldown))
+        if remaining > 0:
+            ratio = min(1.0, remaining / max(1.0, float(max_cooldown)))
+            shade = pygame.Surface((slot.width - 8, round((slot.height - 8) * ratio)), pygame.SRCALPHA)
+            shade.fill((8, 12, 20, 175))
+            self.screen.blit(shade, (slot.x + 4, slot.bottom - 4 - shade.get_height()))
+        small = pygame.font.SysFont('Arial', 10, bold=True)
+        self.screen.blit(small.render(key_label, True, color), (slot.x + 2, slot.bottom + 1))
 
-        # Label
-        font_ult = pygame.font.SysFont('Arial', 11, bold=True)
-        label_color = (255, 230, 80) if ready else (160, 140, 60)
-        lbl = font_ult.render("ULTIMATE [L]", True, label_color)
-        self.screen.blit(lbl, lbl.get_rect(center=(cx, cy + radius + 9)))
+    def draw_archer_ultimate_hud(self):
+        from config import ARCHER_ULTIMATE_COOLDOWN
+        archer = next((player for player in self.players if isinstance(player, Archer)), None)
+        if archer is not None:
+            icon = self._ultimate_hud_icon('assets/hero/archer/archer_ultimate.png', 16, 8)
+            self._draw_single_frame_slot(WIDTH - 240, 84, archer.ultimate_cooldown, ARCHER_ULTIMATE_COOLDOWN, 'ULT', '[3/6]', (255, 180, 85), icon)
 
     def draw_archer_arrow_hud(self):
         archer = next((player for player in self.players if isinstance(player, Archer)), None)
         if archer is None:
             return
         cfg = ARCHER_ARROW_CONFIG.get(getattr(archer, 'arrow_type', 'normal'), ARCHER_ARROW_CONFIG['normal'])
-        font = pygame.font.SysFont('Arial', 15, bold=True)
-        text = font.render(f"P2 ARROW: {cfg['label']}  [0] Change", True, cfg['hud_color'])
-        self.screen.blit(text, (510, 12))
+        cache = getattr(self, '_arrow_hud_icon_cache', {})
+        arrow_type = getattr(archer, 'arrow_type', 'normal')
+        if arrow_type not in cache:
+            try:
+                cache[arrow_type] = pygame.image.load(cfg['path']).convert_alpha()
+            except Exception:
+                cache[arrow_type] = None
+            self._arrow_hud_icon_cache = cache
+        self._draw_single_frame_slot(WIDTH - 186, 84, 0, 1, 'ARR', '[0/C]', cfg['hud_color'], cache[arrow_type])
+        font = pygame.font.SysFont('Arial', 11, bold=True)
+        label = font.render(cfg['label'], True, cfg['hud_color'])
+        self.screen.blit(label, label.get_rect(midtop=(WIDTH - 163, 133)))
+
+    def draw_team_score_hud(self):
+        """A shared score column for the current phase/team."""
+        panel = pygame.Rect(WIDTH // 2 - 72, 8, 144, 48)
+        surface = pygame.Surface(panel.size, pygame.SRCALPHA)
+        surface.fill((16, 25, 38, 220))
+        self.screen.blit(surface, panel.topleft)
+        pygame.draw.rect(self.screen, (255, 205, 70), panel, 2, border_radius=6)
+        title_font = pygame.font.SysFont('Arial', 11, bold=True)
+        score_font = pygame.font.SysFont('Arial', 22, bold=True)
+        title = title_font.render('TEAM SCORE', True, (255, 230, 140))
+        value = score_font.render(str(getattr(self, 'team_score', 0)), True, (255, 255, 255))
+        self.screen.blit(title, title.get_rect(center=(panel.centerx, panel.y + 11)))
+        self.screen.blit(value, value.get_rect(center=(panel.centerx, panel.y + 32)))
 
     def draw_boss_health_bar(self, hp, max_hp, boss_name="BOSS"):
         """Draw a large boss health bar at the bottom of the screen."""
@@ -3686,12 +4086,16 @@ class Game:
 
             icon_scale = bar_cfg.get('icon_scales', [1.0, 1.0, 1.0])[inv_idx]
             icon_size = max(1, int(self._skill_slot_pitch * self._skill_icon_ratio * icon_scale))
-            icon = self._get_skill_icon(skills[inv_idx], icon_size=icon_size)
+            skill_entry = skills[inv_idx]
+            icon = self._get_skill_icon(self._skill_entry_name(skill_entry), icon_size=icon_size)
             icon_off = bar_cfg.get('icon_offsets', [[0, 0], [0, 0], [0, 0]])[inv_idx]
             ix = slot_cx - icon.get_width() // 2
             iy = slot_cy - icon.get_height() // 2 + int(icon_off[1])
             ix += int(icon_off[0])
             native_bar.blit(icon, (ix, iy))
+            if isinstance(skill_entry, dict) and int(skill_entry.get('uses', 1)) > 1:
+                uses = pygame.font.SysFont('Arial', 11, bold=True).render(f"x{int(skill_entry['uses'])}", True, (255, 245, 170))
+                native_bar.blit(uses, (ix + icon.get_width() - uses.get_width(), iy + icon.get_height() - uses.get_height()))
 
             if inv_idx == player.target_skill_idx:
                 target_scale = bar_cfg.get('target_scales', [1.0, 1.0, 1.0])[inv_idx]

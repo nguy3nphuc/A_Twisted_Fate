@@ -27,6 +27,11 @@ MODE_COLORS = {
     'collision_zones': (245, 80, 80), 'floors': (75, 185, 255), 'stairs': (255, 165, 65),
     'tunnels': (190, 105, 255), 'map_boundaries': (80, 235, 255),
 }
+# Stable floor palette: the same number always has the same transparent tint.
+FLOOR_COLORS = {
+    0: (185, 190, 200), 1: (70, 200, 255), 2: (255, 170, 65),
+    3: (190, 110, 255), 4: (80, 225, 145), 5: (255, 105, 170),
+}
 TEXTURE_OUTLINE_COLORS = {
     'struct': (80, 210, 255),
     'props': (255, 180, 70),
@@ -597,6 +602,10 @@ class PixelRuinsTuner:
             self.screen.blit(text, text.get_rect(center=(panel.centerx, panel.y + 95 + index * 31)))
 
     def _draw_region(self, item, color, index):
+        if self.mode == 'floors':
+            color = FLOOR_COLORS.get(int(item.get('floor', 0)), FLOOR_COLORS[0])
+        elif self.mode == 'tunnels':
+            color = FLOOR_COLORS.get(int(item.get('floor', 0)), MODE_COLORS['tunnels'])
         rect = self._screen_rect(pygame.Rect(item['rect']))
         overlay = pygame.Surface(rect.size, pygame.SRCALPHA)
         overlay.fill((*color, 42))
