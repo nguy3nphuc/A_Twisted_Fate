@@ -18,21 +18,21 @@ ARROW_IMAGE = "assets/hero/archer/arrow.png"
 # no choice is strictly stronger than the standard 20-damage arrow.
 ARCHER_ARROW_CONFIG = {
     'normal': {
-        'label': 'Normal', 'path': ARROW_IMAGE, 'damage': 20,
+        'label': 'Normal', 'path': ARROW_IMAGE, 'damage': 30,
         'hud_color': (235, 235, 235), 'effect': None,
     },
     'fire': {
-        'label': 'Red: Burn', 'path': 'assets/projectiles/arrows/MagickArrow/red/1_0.png', 'damage': 14,
+        'label': 'Red: Burn', 'path': 'assets/projectiles/arrows/MagickArrow/red/1_0.png', 'damage': 20,
         'hud_color': (255, 105, 80), 'effect': 'burn',
         'dot_damage': 2, 'dot_duration_ms': 1800, 'dot_tick_ms': 450,
     },
     'frost': {
-        'label': 'Blue: Slow', 'path': 'assets/projectiles/arrows/MagickArrow/blue/1_0.png', 'damage': 16,
+        'label': 'Blue: Slow', 'path': 'assets/projectiles/arrows/MagickArrow/blue/1_0.png', 'damage': 24,
         'hud_color': (105, 185, 255), 'effect': 'slow',
         'slow_duration_ms': 1200, 'slow_mult': 0.72,
     },
     'chain': {
-        'label': 'Purple: Chain', 'path': 'assets/projectiles/arrows/MagickArrow/purple/1_0.png', 'damage': 14,
+        'label': 'Purple: Chain', 'path': 'assets/projectiles/arrows/MagickArrow/purple/1_0.png', 'damage': 18,
         'hud_color': (205, 125, 255), 'effect': 'chain',
         'chain_damage_pct': 0.50, 'chain_enemy_x_range': 135, 'chain_enemy_y_range': 70,
     },
@@ -41,14 +41,20 @@ ARCHER_ARROW_CONFIG = {
 # Picked skill charges. Change only these values to set how many times a
 # dropped skill can be used: 1 = consumable, 2/3 = reusable that many times.
 SKILL_USE_LIMITS = {
-    'default': 1,
-    # Example overrides:
+    'default': 2,
     # 'fire': 2,
     # 'holy': 3,
 }
 
 # Shared team score awarded once whenever an enemy dies.
 TEAM_SCORE_PER_KILL = 10
+# Boss/miniboss score overrides. Add new enemy class names here when needed.
+TEAM_SCORE_BY_ENEMY = {
+    'default': TEAM_SCORE_PER_KILL,
+    'FatCultist': 150,
+    'GoblinTank': 250,
+    'DeathBringer': 500,
+}
 
 # Goblin Asset Paths
 GOBLIN_TANK_DIR = "assets/monsters/goblin_tank"
@@ -170,7 +176,7 @@ DEFAULT_ARMOR_REDUCTION_PCT = 0.25
 PLAYER_RESOURCE_PRESETS = {
 	'knight': {
 		'max_armor': 70,
-		'max_mana': 10000,
+		'max_mana': 100,
 		'armor_reduction_pct': 0.40,
 	},
 	'archer': {
@@ -274,7 +280,7 @@ PIXEL_RUINS_FOOTBOX_HEIGHT_RATIO = 0.28
 # independent from the smaller movement footprint above.
 PIXEL_RUINS_COMBAT_HITBOX_WIDTH_RATIO = 0.90
 PIXEL_RUINS_COMBAT_HITBOX_HEIGHT_RATIO = 0.82
-PIXEL_RUINS_PLAYER_SPEED_MULTIPLIER = 1.60
+PIXEL_RUINS_PLAYER_SPEED_MULTIPLIER = 1.20
 PIXEL_RUINS_ATTACK_HITBOX_HEIGHT_RATIO = 0.55
 # Shift normal melee boxes down toward the hands/feet in the top-down map.
 PIXEL_RUINS_ATTACK_HITBOX_Y_OFFSET = 24
@@ -302,7 +308,7 @@ SKILL_DROP_CONFIG = {
 	},
 	'tiers': {
 		'normal': {
-			'chance': 1,
+			'chance': 0.5,
 			'count_min': 1,
 			'count_max': 1,
 			'weights': {
@@ -313,7 +319,7 @@ SKILL_DROP_CONFIG = {
 				'holy': 8,
 				'wood': 8,
 				'acid': 7,
-				'dark': 60000000,
+				'dark': 6,
 				'earth': 4,
 				'smoke': 4,
 				'light': 3,
@@ -322,7 +328,7 @@ SKILL_DROP_CONFIG = {
 			},
 		},
 		'elite': {
-			'chance': 0.65,
+			'chance': 0.7,
 			'count_min': 1,
 			'count_max': 1,
 			'weights': {
@@ -342,7 +348,7 @@ SKILL_DROP_CONFIG = {
 			},
 		},
 		'miniboss': {
-			'chance': 0.90,
+			'chance': 0.9,
 			'count_min': 1,
 			'count_max': 1,
 			'weights': {

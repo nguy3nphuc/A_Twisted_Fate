@@ -113,3 +113,7 @@ Adjust sprite pivot points.
 - Collision detection uses rectangular hitboxes with depth filtering
 - Damage numbers and effects provide visual feedback for combat actions
 - Each enemy type has unique AI and attack patterns
+
+## Source
+- Assets: itch.io
+- Idea: Mighty Knight

@@ -14,7 +14,7 @@ from config import (WIDTH, HEIGHT, FPS, MAP_IMAGE, MIN_Y, MAX_Y, TEST_DRAW_DEBUG
                      CAMERA_SHAKE_INTENSITY, CAMERA_SHAKE_DURATION,
                      PLAYER_RESOURCE_PRESETS, PLAYER_RESOURCE_REGEN_PER_MS,
                      SKILL_MANA_COST, DEFAULT_ARMOR_REDUCTION_PCT,
-                     SKILL_EFFECT_CONFIG, SKILL_DROP_CONFIG, SKILL_USE_LIMITS, TEAM_SCORE_PER_KILL,
+                     SKILL_EFFECT_CONFIG, SKILL_DROP_CONFIG, SKILL_USE_LIMITS, TEAM_SCORE_PER_KILL, TEAM_SCORE_BY_ENEMY,
                      SKILL_COMBAT_CONFIG,
                      ABILITY_VIAL_DROP_CHANCE, ABILITY_MAX_LEVEL,
                      ABILITY_ATTACK_BONUS_PER_LEVEL, ABILITY_ARMOR_BONUS_PER_LEVEL,
@@ -1192,6 +1192,13 @@ class Game:
     @staticmethod
     def _poison_drop_count(enemy):
         return max(1, int(POISON_VIAL_DROP_COUNT.get(type(enemy).__name__, POISON_VIAL_DROP_COUNT.get('default', 1))))
+
+    @staticmethod
+    def _team_score_for_enemy(enemy):
+        """Return the configured shared score for this enemy or boss."""
+        if enemy is None:
+            return TEAM_SCORE_PER_KILL
+        return int(TEAM_SCORE_BY_ENEMY.get(type(enemy).__name__, TEAM_SCORE_BY_ENEMY.get('default', TEAM_SCORE_PER_KILL)))
 
     def upgrade_player_ability(self, player, ability_name):
         """Spend one Poison Vial point on a player-selected stat."""
@@ -3147,8 +3154,13 @@ class Game:
             if phase4_map:
                 self._update_phase4_combat_hitbox(player)
                 self._update_phase4_footbox(player)
-                self._resolve_map_collision(player, previous_footbox)
+                # Detect an A/B tunnel entrance from the player's intended
+                # movement before wall collision can push them back.  This is
+                # especially important for Archer: her dash can reach the
+                # tunnel line and a wall on the same frame.  Resolving the
+                # wall first loses that crossing, so she could never enter.
                 self._update_tunnel_traversal(player, previous_footbox)
+                self._resolve_map_collision(player, previous_footbox)
                 self._update_player_stair_floor(player, previous_footbox)
                 self._update_entity_region_floor(player)
 
@@ -3853,7 +3865,7 @@ class Game:
         for enemy in self.enemies:
             if enemy.hp <= 0 and not getattr(enemy, 'team_score_awarded', False):
                 enemy.team_score_awarded = True
-                self.team_score += TEAM_SCORE_PER_KILL
+                self.team_score += self._team_score_for_enemy(enemy)
 
         self._check_campaign_score_goal()
 

@@ -517,7 +517,7 @@ class Knight(pygame.sprite.Sprite, HealthMixin):
         _preset = PLAYER_RESOURCE_PRESETS.get('knight', {})
         HealthMixin.__init__(
             self,
-            max_hp=1000000000,
+            max_hp=120,
             max_armor=_preset.get('max_armor', 70),
             max_mana=_preset.get('max_mana', 100),
             armor_reduction_pct=_preset.get('armor_reduction_pct', 0.40),
@@ -2835,7 +2835,7 @@ class Archer(pygame.sprite.Sprite, HealthMixin):
             self.vel.y = self.speed
 
     def spawn_arrow(self, groups):
-        spawn_y = self.rect.bottom - 6 - self.rect.height // 2
+        spawn_y = self.rect.bottom + 15 - self.rect.height // 2
         spawn_x = self.rect.centerx + (20 * self.facing)
         arrow_cfg = ARCHER_ARROW_CONFIG.get(self.arrow_type, ARCHER_ARROW_CONFIG['normal'])
         arrow = Arrow(spawn_x, spawn_y, self.facing, damage=arrow_cfg['damage'], owner=self, arrow_type=self.arrow_type)
