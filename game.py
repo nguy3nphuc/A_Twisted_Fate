@@ -9,7 +9,7 @@ import config as config_module
 import entities as entities_module
 from types import SimpleNamespace
 from pixel_ruins_map import PixelRuinsMap
-from config import (WIDTH, HEIGHT, FPS, MAP_IMAGE, MIN_Y, MAX_Y,
+from config import (WIDTH, HEIGHT, FPS, MAP_IMAGE, MIN_Y, MAX_Y, TEST_DRAW_DEBUG_BOXES,
                      CRIT_CHANCE, CRIT_MULTIPLIER,
                      CAMERA_SHAKE_INTENSITY, CAMERA_SHAKE_DURATION,
                      PLAYER_RESOURCE_PRESETS, PLAYER_RESOURCE_REGEN_PER_MS,
@@ -19,9 +19,10 @@ from config import (WIDTH, HEIGHT, FPS, MAP_IMAGE, MIN_Y, MAX_Y,
                      ABILITY_VIAL_DROP_CHANCE, ABILITY_MAX_LEVEL,
                      ABILITY_ATTACK_BONUS_PER_LEVEL, ABILITY_ARMOR_BONUS_PER_LEVEL,
                      ABILITY_SPEED_BONUS_PER_LEVEL, ARCHER_ARROW_CONFIG,
+                     POISON_LEVEL_BASE_REQUIRED, POISON_LEVEL_REQUIREMENT_PER_LEVEL, POISON_VIAL_DROP_COUNT,
                      BERSERK_VIAL_DROP_CHANCE, BERSERK_VIAL_DURATION_MS,
                      BERSERK_DAMAGE_MULTIPLIER, BERSERK_ARMOR_EFFECTIVENESS_MULTIPLIER,
-                     HOLY_EFFECT_DURATION_MS, PIXEL_RUINS_CAMERA_ZOOM,
+                     HOLY_EFFECT_DURATION_MS, CLASSIC_PHASE_ENTITY_SCALE, PIXEL_RUINS_CAMERA_ZOOM,
                      PIXEL_RUINS_ENTITY_SCALE, PIXEL_RUINS_TUNNEL_ENTITY_ALPHA,
                      PIXEL_RUINS_FOOTBOX_WIDTH_RATIO, PIXEL_RUINS_FOOTBOX_HEIGHT_RATIO,
                      PIXEL_RUINS_COMBAT_HITBOX_WIDTH_RATIO, PIXEL_RUINS_COMBAT_HITBOX_HEIGHT_RATIO,
@@ -145,6 +146,217 @@ class SkillEffect(pygame.sprite.Sprite):
                 self.rect = self.image.get_rect(midbottom=anchor)
             else:
                 self.rect = self.image.get_rect(center=anchor)
+
+
+class LevelUpVFX(pygame.sprite.Sprite):
+    """Animated LEVEL UP text from the Gigapack sprite sheet."""
+
+    SHEET_PATH = os.path.join(
+        'assets', 'vfx', 'Super Pixel Effects Gigapack', 'spritesheet', 'Symbols',
+        'symbol_level_up_text_001', 'symbol_level_up_text_001_large_blue', 'spritesheet.png',
+    )
+    _frames_cache = None
+
+    @classmethod
+    def _frames(cls):
+        if cls._frames_cache is not None:
+            return cls._frames_cache
+        try:
+            sheet = pygame.image.load(cls.SHEET_PATH).convert_alpha()
+            frames = []
+            for index in range(44):
+                x, y = (index % 6) * 320, (index // 6) * 128
+                if x + 320 <= sheet.get_width() and y + 128 <= sheet.get_height():
+                    frame = sheet.subsurface(pygame.Rect(x, y, 320, 128)).copy()
+                    frames.append(pygame.transform.smoothscale(frame, (224, 90)))
+            cls._frames_cache = frames
+        except Exception:
+            cls._frames_cache = []
+        return cls._frames_cache
+
+    def __init__(self, x, y):
+        super().__init__()
+        self._frames = self._frames()
+        self.frame_index = 0
+        self.timer = 0
+        self.frame_ms = 35
+        self.anchor = (x, y)
+        self.image = self._frames[0] if self._frames else pygame.Surface((1, 1), pygame.SRCALPHA)
+        self.rect = self.image.get_rect(midbottom=self.anchor)
+
+    @property
+    def floor_y(self):
+        return self.rect.bottom
+
+    def update(self, dt):
+        self.timer += dt
+        while self.timer >= self.frame_ms:
+            self.timer -= self.frame_ms
+            self.frame_index += 1
+            if self.frame_index >= len(self._frames):
+                self.kill()
+                return
+            self.image = self._frames[self.frame_index]
+            self.rect = self.image.get_rect(midbottom=self.anchor)
+
+
+class SymbolVFX(pygame.sprite.Sprite):
+    """Reusable Gigapack symbol animation, optionally following an entity."""
+
+    _frames_cache = {}
+    SYMBOLS = {
+        'alert': ('symbol_alert_001', 'symbol_alert_001_large_red', 80, 80, 14, 1.15),
+        'warning': ('symbol_warning_001', 'symbol_warning_001_large_yellow', 80, 80, 60, 1.05),
+        'crown': ('symbol_crown_001', 'symbol_crown_001_large_yellow', 64, 48, 45, 1.10),
+    }
+
+    @classmethod
+    def frames(cls, symbol_name):
+        if symbol_name in cls._frames_cache:
+            return cls._frames_cache[symbol_name]
+        folder, variant, frame_w, frame_h, frame_count, scale = cls.SYMBOLS[symbol_name]
+        path = os.path.join(
+            'assets', 'vfx', 'Super Pixel Effects Gigapack', 'spritesheet', 'Symbols',
+            folder, variant, 'spritesheet.png',
+        )
+        frames = []
+        try:
+            sheet = pygame.image.load(path).convert_alpha()
+            cols = max(1, sheet.get_width() // frame_w)
+            for index in range(frame_count):
+                x = (index % cols) * frame_w
+                y = (index // cols) * frame_h
+                if x + frame_w > sheet.get_width() or y + frame_h > sheet.get_height():
+                    break
+                frame = sheet.subsurface(pygame.Rect(x, y, frame_w, frame_h)).copy()
+                frames.append(pygame.transform.scale(frame, (round(frame_w * scale), round(frame_h * scale))))
+        except Exception:
+            frames = []
+        cls._frames_cache[symbol_name] = frames
+        return frames
+
+    def __init__(self, symbol_name, x=0, y=0, target=None, loop=False, frame_ms=45):
+        super().__init__()
+        self._frames = self.frames(symbol_name)
+        self.target = target
+        self.loop = loop
+        self.frame_ms = frame_ms
+        self.timer = 0
+        self.frame_index = 0
+        self.image = self._frames[0] if self._frames else pygame.Surface((1, 1), pygame.SRCALPHA)
+        self.rect = self.image.get_rect(midbottom=(x, y))
+
+    @property
+    def floor_y(self):
+        return self.rect.bottom
+
+    def update(self, dt):
+        if self.target is not None:
+            if getattr(self.target, 'hp', 0) <= 0:
+                self.kill()
+                return
+            self.rect.midbottom = (self.target.hurtbox.centerx, self.target.hurtbox.top - 6)
+        self.timer += dt
+        while self.timer >= self.frame_ms:
+            self.timer -= self.frame_ms
+            self.frame_index += 1
+            if self.frame_index >= len(self._frames):
+                if not self.loop:
+                    self.kill()
+                    return
+                self.frame_index = 0
+            self.image = self._frames[self.frame_index]
+            anchor = self.rect.midbottom
+            self.rect = self.image.get_rect(midbottom=anchor)
+
+
+class GigapackEffect(pygame.sprite.Sprite):
+    """Small reusable VFX loader for the Gigapack sheets used by gameplay."""
+
+    _frames_cache = {}
+    CONFIG = {
+        'zombie_aura': {
+            'path': ('Fantasy Spells', 'status_poison_001', 'status_poison_001_small_green'),
+            'frame_size': (48, 48), 'scale': 1.15, 'foreground': True,
+        },
+        'enemy_spawn': {
+            'path': ('Smoke Bursts', 'symmetrical_smoke_burst_001', 'symmetrical_smoke_burst_001_large_brown'),
+            'frame_size': (64, 64), 'scale': 1.10, 'foreground': False,
+        },
+    }
+
+    @classmethod
+    def frames(cls, effect_name):
+        if effect_name in cls._frames_cache:
+            return cls._frames_cache[effect_name]
+        cfg = cls.CONFIG[effect_name]
+        path = os.path.join(
+            'assets', 'vfx', 'Super Pixel Effects Gigapack', 'spritesheet', *cfg['path'], 'spritesheet.png'
+        )
+        frames = []
+        try:
+            sheet = pygame.image.load(path).convert_alpha()
+            frame_w, frame_h = cfg['frame_size']
+            scale = float(cfg['scale'])
+            for row in range(sheet.get_height() // frame_h):
+                for col in range(sheet.get_width() // frame_w):
+                    frame = sheet.subsurface(pygame.Rect(col * frame_w, row * frame_h, frame_w, frame_h)).copy()
+                    frames.append(pygame.transform.scale(frame, (round(frame_w * scale), round(frame_h * scale))))
+        except Exception:
+            frames = []
+        cls._frames_cache[effect_name] = frames
+        return frames
+
+    def __init__(self, effect_name, x=0, y=0, target=None, loop=False, frame_ms=55):
+        super().__init__()
+        self.effect_name = effect_name
+        self._frames = self.frames(effect_name)
+        self.target = target
+        self.loop = loop
+        self.frame_ms = frame_ms
+        self.timer = 0
+        self.frame_index = 0
+        self.draw_foreground = bool(self.CONFIG[effect_name]['foreground'])
+        self.image = self._frames[0] if self._frames else pygame.Surface((1, 1), pygame.SRCALPHA)
+        self.rect = self.image.get_rect(midbottom=(x, y))
+        self._follow_target()
+
+    @property
+    def floor_y(self):
+        return self.rect.bottom
+
+    def _follow_target(self):
+        if self.target is None or not hasattr(self.target, 'hurtbox'):
+            return
+        if self.effect_name == 'zombie_aura':
+            self.rect.center = self.target.hurtbox.center
+        else:
+            self.rect.midbottom = self.target.hurtbox.midbottom
+
+    def update(self, dt):
+        if self.target is not None:
+            if getattr(self.target, 'hp', 0) <= 0:
+                self.kill()
+                return
+            if self.effect_name == 'zombie_aura' and pygame.time.get_ticks() >= getattr(self.target, 'zombie_until', 0):
+                self.kill()
+                return
+            self._follow_target()
+        self.timer += dt
+        while self.timer >= self.frame_ms:
+            self.timer -= self.frame_ms
+            self.frame_index += 1
+            if self.frame_index >= len(self._frames):
+                if not self.loop:
+                    self.kill()
+                    return
+                self.frame_index = 0
+            anchor = self.rect.center if self.effect_name == 'zombie_aura' else self.rect.midbottom
+            self.image = self._frames[self.frame_index]
+            if self.effect_name == 'zombie_aura':
+                self.rect = self.image.get_rect(center=anchor)
+            else:
+                self.rect = self.image.get_rect(midbottom=anchor)
 
 
 class WindStreamEffect(pygame.sprite.Sprite):
@@ -733,8 +945,13 @@ class Game:
         self.state = "SELECT"
         self.paused = False
         self.DEBUG_DRAW = False # Set to True to see hitboxes and hurtboxes
+        self.test_mode = False
         self.selected_hero = 'knight'
         self.selected_phase = 1
+        self.campaign_mode = False
+        self.campaign_score_goal = 1000
+        self.campaign_next_phase = None
+        self.campaign_transition_until = 0
 
         # Camera shake state
         self.camera_offset = [0, 0]
@@ -957,13 +1174,24 @@ class Game:
 
     def _ensure_player_abilities(self, player):
         """Create the per-player upgrade state lazily for compatibility."""
-        if hasattr(player, 'ability_points'):
-            return
-        player.ability_points = 0
-        player.ability_levels = {'attack': 0, 'armor': 0, 'speed': 0}
-        player.ability_attack_bonus = 0
-        # Store the unmodified movement speed; passive skills build on it.
-        player.base_speed = getattr(player, 'speed', 0)
+        if not hasattr(player, 'ability_points'):
+            player.ability_points = 0
+            player.ability_levels = {'attack': 0, 'armor': 0, 'speed': 0}
+            player.ability_attack_bonus = 0
+            # Store the unmodified movement speed; passive skills build on it.
+            player.base_speed = getattr(player, 'speed', 0)
+        if not hasattr(player, 'level'):
+            player.level = 1
+        if not hasattr(player, 'poison_xp'):
+            player.poison_xp = 0
+
+    @staticmethod
+    def _poison_needed_for_next_level(player):
+        return max(1, int(POISON_LEVEL_BASE_REQUIRED + (player.level - 1) * POISON_LEVEL_REQUIREMENT_PER_LEVEL))
+
+    @staticmethod
+    def _poison_drop_count(enemy):
+        return max(1, int(POISON_VIAL_DROP_COUNT.get(type(enemy).__name__, POISON_VIAL_DROP_COUNT.get('default', 1))))
 
     def upgrade_player_ability(self, player, ability_name):
         """Spend one Poison Vial point on a player-selected stat."""
@@ -1094,6 +1322,14 @@ class Game:
         player.active_skill = chosen_skill
         if chosen_skill == 'holy':
             player.holy_effect_until = pygame.time.get_ticks() + HOLY_EFFECT_DURATION_MS
+        elif chosen_skill == 'shield':
+            player.shield_effect_until = pygame.time.get_ticks() + int(
+                self._skill_combat_value('shield', 'duration_ms', 5500)
+            )
+        elif chosen_skill == 'smoke':
+            player.smoke_effect_until = pygame.time.get_ticks() + int(
+                self._skill_combat_value('smoke', 'duration_ms', 4000)
+            )
         if player.active_skill == 'fire':
             self._cast_fire_burst(player)
         elif player.active_skill == 'wind':
@@ -1112,6 +1348,8 @@ class Game:
             self._spawn_wood_projectile(player)
         elif player.active_skill == 'acid':
             self._spawn_acid_projectile(player)
+        elif player.active_skill == 'thunder':
+            self._cast_thunder_strike(player)
         else:
             # Activation VFX around the player.
             self._spawn_skill_vfx(player.active_skill, player.hurtbox.centerx, player.hurtbox.centery, getattr(player, 'facing', 1))
@@ -1124,9 +1362,8 @@ class Game:
         if remaining_uses <= 0:
             player.skills.pop(idx)
         player.target_skill_idx = min(idx, max(0, len(player.skills) - 1))
-        # Holy is the only timed effect that must remain active after its item
-        # is consumed. Other skills have already spawned their one-shot effect.
-        if chosen_skill != 'holy':
+        # Timed buffs remain active after their consumable has been spent.
+        if chosen_skill not in ('holy', 'shield', 'smoke'):
             player.active_skill = None
 
     def _spawn_skill_vfx(self, skill_name, x, y, facing=1):
@@ -1390,6 +1627,46 @@ class Game:
 
         self._spawn_skill_vfx('earth', player.hurtbox.centerx, player.foot_y, getattr(player, 'facing', 1))
 
+    def _cast_thunder_strike(self, player):
+        """Strike the nearest reachable enemy with lightning and briefly slow it."""
+        if player is None or getattr(player, 'hp', 0) <= 0:
+            return
+
+        range_x = float(self._skill_combat_value('thunder', 'cast_enemy_x_range', 260))
+        range_y = float(self._skill_combat_value('thunder', 'cast_enemy_y_range', 120))
+        candidates = [
+            enemy for enemy in self.enemies
+            if enemy.hp > 0
+            and self._projectile_floor_can_hit(player, enemy)
+            and abs(enemy.hurtbox.centerx - player.hurtbox.centerx) <= range_x
+            and math.fabs(enemy.foot_y - player.foot_y) <= range_y
+        ]
+        if not candidates:
+            self._spawn_skill_vfx('thunder', player.hurtbox.centerx, player.hurtbox.centery, getattr(player, 'facing', 1))
+            return
+
+        target = min(candidates, key=lambda enemy: (
+            abs(enemy.hurtbox.centerx - player.hurtbox.centerx),
+            abs(enemy.foot_y - player.foot_y),
+        ))
+        damage = self._passive_attack_damage(player, self._skill_combat_value('thunder', 'cast_damage', 26), target)
+        damage = self._consume_entity_armor(target, damage)
+        self._spawn_skill_vfx('thunder', target.hurtbox.centerx, target.hurtbox.centery, getattr(player, 'facing', 1))
+        if damage <= 0:
+            return
+
+        old_hp = target.hp
+        target.take_damage(damage, source_x=player.hurtbox.centerx, is_crit=False)
+        if target.hp < old_hp:
+            self.damage_numbers.add(DamageNumber(target.hurtbox.centerx, target.hurtbox.top, damage, is_crit=False))
+            now = pygame.time.get_ticks()
+            target.slow_until = max(getattr(target, 'slow_until', 0), now + int(
+                self._skill_combat_value('thunder', 'slow_duration_ms', 750)
+            ))
+            target.slow_mult = min(getattr(target, 'slow_mult', 1.0), float(
+                self._skill_combat_value('thunder', 'slow_mult', 0.62)
+            ))
+
     def _apply_bonus_damage(self, enemy, amount, source_x, skill_name):
         """Apply extra passive damage cleanly with number + vfx."""
         if enemy is None or enemy.hp <= 0 or amount <= 0:
@@ -1464,6 +1741,7 @@ class Game:
         move_mult = float(self._skill_combat_value('dark', 'zombie_move_multiplier', 0.90))
         zombie_speed = max(0.2, float(enemy.base_speed) * move_mult)
         dx = target.hurtbox.centerx - enemy.hurtbox.centerx
+        dy = target.foot_y - enemy.foot_y
         dir_x = 1 if dx >= 0 else -1
         enemy.facing = dir_x
 
@@ -1471,15 +1749,33 @@ class Game:
         y_range = float(self._skill_combat_value('dark', 'zombie_attack_y_range', 60))
         in_range = abs(dx) <= x_range and math.fabs(target.foot_y - enemy.foot_y) <= y_range
         if not in_range:
-            step = dir_x * zombie_speed * dt
-            enemy.rect.x += int(round(step))
+            # Move on both axes.  The previous version moved only horizontally,
+            # so a target on another lane could never be reached.
+            direction = pygame.math.Vector2(dx, dy)
+            if direction.length_squared() > 0:
+                direction = direction.normalize()
+            step_size = zombie_speed * (dt / (1000.0 / FPS))
+            move_x = int(round(direction.x * step_size))
+            move_y = int(round(direction.y * step_size))
+            enemy.rect.x += move_x
+            enemy.rect.y += move_y
             if hasattr(enemy, 'hurtbox'):
-                enemy.hurtbox.x += int(round(step))
+                enemy.hurtbox.x += move_x
+                enemy.hurtbox.y += move_y
+            if getattr(enemy, 'animator', None) is not None:
+                # Enemy animation configs use ``run`` for locomotion (not
+                # ``walk``), so the old state change was silently ignored.
+                enemy.animator.set_state('run', reset=False)
+                enemy.update_animation(dt)
             return
 
         now = pygame.time.get_ticks()
         next_hit = getattr(enemy, 'zombie_next_hit', 0)
         if now < next_hit:
+            if getattr(enemy, 'animator', None) is not None:
+                if now >= getattr(enemy, 'zombie_attack_anim_until', 0):
+                    enemy.animator.set_state('idle', reset=False)
+                enemy.update_animation(dt)
             return
 
         attack_damage = int(self._skill_combat_value('dark', 'zombie_attack_damage', 9))
@@ -1496,6 +1792,10 @@ class Game:
                 DamageNumber(target.hurtbox.centerx, target.hurtbox.top, actual_damage, is_crit=False)
             )
             self._spawn_skill_vfx('dark', target.hurtbox.centerx, target.hurtbox.centery, enemy.facing)
+        if getattr(enemy, 'animator', None) is not None:
+            enemy.animator.set_state('attack', reset=False)
+            enemy.update_animation(dt)
+            enemy.zombie_attack_anim_until = now + min(320, attack_interval)
         enemy.zombie_next_hit = now + attack_interval
 
     def _apply_enemy_status_effects(self, enemy):
@@ -1531,10 +1831,15 @@ class Game:
         skill = getattr(player, 'active_skill', None)
         if skill is None:
             return None
-        if skill == 'holy' and pygame.time.get_ticks() >= getattr(player, 'holy_effect_until', 0):
-            player.active_skill = None
-            return None
-        if skill == 'holy':
+        timed_effects = {
+            'holy': 'holy_effect_until',
+            'shield': 'shield_effect_until',
+            'smoke': 'smoke_effect_until',
+        }
+        if skill in timed_effects:
+            if pygame.time.get_ticks() >= getattr(player, timed_effects[skill], 0):
+                player.active_skill = None
+                return None
             return skill
         if skill not in [self._skill_entry_name(entry) for entry in getattr(player, 'skills', [])]:
             player.active_skill = None
@@ -1598,6 +1903,9 @@ class Game:
     def _passive_defense_damage(self, player, incoming_damage):
         skill = self._active_passive(player)
         dmg = float(incoming_damage)
+        if skill == 'smoke' and random.random() < float(self._skill_combat_value('smoke', 'dodge_chance', 0.45)):
+            self._spawn_skill_vfx('smoke', player.hurtbox.centerx, player.hurtbox.centery, getattr(player, 'facing', 1))
+            return 0
         if skill:
             defense_mult = self._skill_combat_value(skill, 'defense_multiplier', None)
             if defense_mult is not None:
@@ -1607,10 +1915,31 @@ class Game:
                 dmg = max(1.0, dmg - float(flat_reduce))
         return max(1, int(round(dmg)))
 
-    def _on_player_hit_enemy_passive(self, player, enemy, dealt_damage):
+    def _apply_dark_hit_effects(self, player, enemy, dealt_damage):
+        """Apply Dark's one-shot effects to a small enemy hit by Dark itself."""
+        if player is None or enemy is None or enemy.hp <= 0 or not self._is_dark_eligible_enemy(enemy):
+            return
+        self._spawn_skill_vfx('dark', enemy.hurtbox.centerx, enemy.hurtbox.centery, getattr(player, 'facing', 1))
+        lifesteal = max(1, int(dealt_damage * float(self._skill_combat_value('dark', 'lifesteal_pct', 0.18))))
+        player.hp = min(player.max_hp, player.hp + lifesteal)
+        now = pygame.time.get_ticks()
+        was_zombie = self._is_enemy_zombie(enemy, now)
+        if random.random() < float(self._skill_combat_value('dark', 'zombie_proc_chance', 1.0)):
+            zombie_duration = int(self._skill_combat_value('dark', 'zombie_duration_ms', 5000))
+            enemy.zombie_until = max(getattr(enemy, 'zombie_until', 0), now + zombie_duration)
+            enemy.zombie_next_hit = min(getattr(enemy, 'zombie_next_hit', now), now + 260)
+            if not was_zombie:
+                self.effects.add(GigapackEffect('zombie_aura', target=enemy, loop=True, frame_ms=65))
+        if random.random() < float(self._skill_combat_value('dark', 'bonus_proc_chance', 0.22)):
+            bonus = max(2, int(dealt_damage * float(self._skill_combat_value('dark', 'bonus_damage_pct', 0.32))))
+            self._apply_bonus_damage(enemy, bonus, player.rect.centerx, 'dark')
+
+    def _on_player_hit_enemy_passive(self, player, enemy, dealt_damage, skill_override=None):
         if player is None or enemy.hp <= 0:
             return
-        skill = self._active_passive(player)
+        # A fired consumable keeps its own effect even after being removed
+        # from the player's inventory.
+        skill = skill_override or self._active_passive(player)
         if skill is None:
             return
         if skill == 'dark' and not self._is_dark_eligible_enemy(enemy):
@@ -1638,15 +1967,7 @@ class Game:
                     self._apply_bonus_damage(other, splash_damage, player.rect.centerx, 'fire')
 
         if skill == 'dark':
-            lifesteal = max(1, int(dealt_damage * float(self._skill_combat_value('dark', 'lifesteal_pct', 0.18))))
-            player.hp = min(player.max_hp, player.hp + lifesteal)
-            now = pygame.time.get_ticks()
-            if random.random() < float(self._skill_combat_value('dark', 'zombie_proc_chance', 1.0)):
-                zombie_duration = int(self._skill_combat_value('dark', 'zombie_duration_ms', 5000))
-                enemy.zombie_until = max(getattr(enemy, 'zombie_until', 0), now + zombie_duration)
-                enemy.zombie_next_hit = min(getattr(enemy, 'zombie_next_hit', now), now + 260)
-            if random.random() < float(self._skill_combat_value('dark', 'bonus_proc_chance', 0.22)):
-                self._apply_bonus_damage(enemy, max(2, int(dealt_damage * float(self._skill_combat_value('dark', 'bonus_damage_pct', 0.32)))), player.rect.centerx, 'dark')
+            self._apply_dark_hit_effects(player, enemy, dealt_damage)
         elif skill == 'holy':
             player.hp = min(player.max_hp, player.hp + int(self._skill_combat_value('holy', 'heal_on_hit', 1)))
         elif skill == 'wind':
@@ -1896,9 +2217,11 @@ class Game:
         self.shake_timer = 0
         self.shake_intensity = 0
         self.paused = False
-        # Phase 4 is currently being authored in the map tuner, so keep its
-        # collision view visible by default. F3 can hide it during play.
-        self.DEBUG_DRAW = self.selected_phase == 4
+        self.pause_scroll_state = None
+        self.pause_scroll_started_at = 0
+        # Test mode uses one config switch for every phase. Regular gameplay
+        # keeps the existing phase-4 authoring overlay behavior.
+        self.DEBUG_DRAW = TEST_DRAW_DEBUG_BOXES if self.test_mode else self.selected_phase == 4
 
     def _move_phase4_entity_footbox_to(self, entity, target_footbox):
         """Move every map-relevant box together, preserving sprite alignment."""
@@ -2332,6 +2655,7 @@ class Game:
 
         self.enemies.add(enemy)
         self.all_sprites.add(enemy)
+        self.effects.add(GigapackEffect('enemy_spawn', enemy.hurtbox.centerx, enemy.foot_y))
 
     def _phase4_enemy_spawn_position(self):
         """Choose a safe enemy spawn strictly inside tuner-authored floor boxes."""
@@ -2364,7 +2688,10 @@ class Game:
         boss = FatCultist(pos=(x, y))
         self.enemies.add(boss)
         self.all_sprites.add(boss)
+        self.effects.add(GigapackEffect('enemy_spawn', boss.hurtbox.centerx, boss.foot_y))
         self.miniboss_spawned = True
+        self.effects.add(SymbolVFX('crown', target=boss, loop=True, frame_ms=65))
+        self._show_boss_warning('ELITE APPROACHING', 'warning')
 
     def spawn_boss(self):
         """Spawn the phase's boss from the right side."""
@@ -2379,7 +2706,16 @@ class Game:
 
         self.enemies.add(boss)
         self.all_sprites.add(boss)
+        self.effects.add(GigapackEffect('enemy_spawn', boss.hurtbox.centerx, boss.foot_y))
         self.boss_spawned = True
+        self.effects.add(SymbolVFX('crown', target=boss, loop=True, frame_ms=65))
+        self._show_boss_warning('BOSS APPROACHING', 'alert')
+        self.trigger_camera_shake(intensity=6)
+
+    def _show_boss_warning(self, label, symbol_name):
+        self.boss_warning_label = label
+        self.boss_warning_symbol = symbol_name
+        self.boss_warning_until = pygame.time.get_ticks() + 2600
 
     def trigger_camera_shake(self, intensity=None):
         """Start a camera shake effect."""
@@ -2415,6 +2751,17 @@ class Game:
             elif self.state == "PHASE_SELECT":
                 self.events_phase_select()
                 self.draw_phase_select()
+            elif self.state == "CAMPAIGN_CLEAR":
+                self.events_campaign_transition()
+                self.draw()
+                self.draw_campaign_message(
+                    f"PHASE {self.selected_phase} CLEAR!",
+                    f"Moving to phase {self.campaign_next_phase}...",
+                )
+            elif self.state == "CAMPAIGN_COMPLETE":
+                self.events_campaign_transition()
+                self.draw()
+                self.draw_campaign_message("CAMPAIGN COMPLETE!", "All four phases cleared — Esc: quit")
             else:
                 self.events()
                 if not self.paused:
@@ -2422,6 +2769,50 @@ class Game:
                 self.draw()
         pygame.quit()
         sys.exit()
+
+    def start_campaign(self):
+        """Start the four-phase run directly, bypassing the debug phase picker."""
+        self.campaign_mode = True
+        self.campaign_score_goal = 1000
+        self.campaign_next_phase = None
+        self.selected_phase = 1
+        self.state = "PLAY"
+        self.load()
+
+    def _check_campaign_score_goal(self):
+        if not self.campaign_mode or self.state != "PLAY":
+            return
+        if self.team_score < self.campaign_score_goal:
+            return
+        if self.selected_phase >= 4:
+            self.state = "CAMPAIGN_COMPLETE"
+            return
+        self.campaign_next_phase = self.selected_phase + 1
+        self.campaign_transition_until = pygame.time.get_ticks() + 2200
+        self.state = "CAMPAIGN_CLEAR"
+
+    def events_campaign_transition(self):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                self.running = False
+        if self.state == "CAMPAIGN_CLEAR" and pygame.time.get_ticks() >= self.campaign_transition_until:
+            self.selected_phase = self.campaign_next_phase
+            self.campaign_next_phase = None
+            self.state = "PLAY"
+            self.load()
+
+    def draw_campaign_message(self, title_text, subtitle_text):
+        """Overlay used between campaign phases without changing combat rendering."""
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((8, 12, 22, 170))
+        self.screen.blit(overlay, (0, 0))
+        title = pygame.font.SysFont('Arial', 44, bold=True).render(title_text, True, (255, 221, 92))
+        subtitle = pygame.font.SysFont('Arial', 22, bold=True).render(subtitle_text, True, (240, 240, 230))
+        self.screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 18)))
+        self.screen.blit(subtitle, subtitle.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 30)))
+        pygame.display.flip()
 
     def _reload_skill_frame_assets(self):
         """Rebuild frame/target alignment after ratio-related changes."""
@@ -2682,7 +3073,14 @@ class Game:
                     self.spawn_enemy()
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    self.paused = not self.paused
+                    now = pygame.time.get_ticks()
+                    if not self.paused:
+                        self.paused = True
+                        self.pause_scroll_state = 'opening'
+                        self.pause_scroll_started_at = now
+                    elif self.pause_scroll_state != 'closing':
+                        self.pause_scroll_state = 'closing'
+                        self.pause_scroll_started_at = now
                     continue
 
                 if event.key == pygame.K_F5 and self.selected_phase == 4:
@@ -2694,6 +3092,10 @@ class Game:
                     continue
 
                 if self.paused:
+                    # Do not allow pause-menu actions while the scroll is
+                    # still rolling open/closed.
+                    if self.pause_scroll_state != 'open':
+                        continue
                     if len(self.players) > 0:
                         p1_upgrades = {
                             pygame.K_1: 'attack', pygame.K_2: 'armor', pygame.K_3: 'speed',
@@ -2754,19 +3156,24 @@ class Game:
         for e in list(self.enemies):
             living_players = [p for p in self.players if p.hp > 0]
             target = self._enemy_ai_target(e, living_players)
-            if target is None:
+            is_zombie = self._is_enemy_zombie(e)
+            if target is None and not is_zombie:
                 continue
             self._apply_enemy_status_effects(e)
             if phase4_map:
                 self._update_phase4_combat_hitbox(e)
                 self._update_phase4_footbox(e)
                 previous_footbox = e.map_footbox.copy()
-            e.update(dt, target, self.groups)
+            if is_zombie:
+                self._update_zombie_enemy(e, dt)
+            else:
+                e.update(dt, target, self.groups)
             if phase4_map:
                 self._update_phase4_combat_hitbox(e)
                 self._update_phase4_footbox(e)
                 self._resolve_map_collision(e, previous_footbox)
-                self._update_phase4_enemy_path(e, target, previous_footbox)
+                if not is_zombie:
+                    self._update_phase4_enemy_path(e, target, previous_footbox)
                 self._update_tunnel_traversal(e, previous_footbox)
                 self._update_entity_region_floor(e)
 
@@ -2930,7 +3337,7 @@ class Game:
                     if enemy.hp < old_hp:
                         dmg_num = DamageNumber(enemy.hurtbox.centerx, enemy.hurtbox.top, final_damage, is_crit=is_crit)
                         self.damage_numbers.add(dmg_num)
-                        self._on_player_hit_enemy_passive(getattr(proj, 'owner', None), enemy, final_damage)
+                        self._on_player_hit_enemy_passive(getattr(proj, 'owner', None), enemy, final_damage, 'water_ball')
 
                         vfx_type = "death" if enemy.hp <= 0 else "hit"
                         blood = BloodVFX(enemy.hurtbox.centerx, enemy.hurtbox.centery, getattr(enemy, 'facing', 1), enemy.foot_y, vfx_type=vfx_type)
@@ -3088,7 +3495,7 @@ class Game:
                     if enemy.hp < old_hp:
                         dmg_num = DamageNumber(enemy.hurtbox.centerx, enemy.hurtbox.top, final_damage, is_crit=is_crit)
                         self.damage_numbers.add(dmg_num)
-                        self._on_player_hit_enemy_passive(getattr(proj, 'owner', None), enemy, final_damage)
+                        self._apply_dark_hit_effects(getattr(proj, 'owner', None), enemy, final_damage)
 
                         vfx_type = "death" if enemy.hp <= 0 else "hit"
                         blood = BloodVFX(enemy.hurtbox.centerx, enemy.hurtbox.centery, getattr(enemy, 'facing', 1), enemy.foot_y, vfx_type=vfx_type)
@@ -3158,7 +3565,7 @@ class Game:
                     if enemy.hp < old_hp:
                         dmg_num = DamageNumber(enemy.hurtbox.centerx, enemy.hurtbox.top, final_damage, is_crit=is_crit)
                         self.damage_numbers.add(dmg_num)
-                        self._on_player_hit_enemy_passive(getattr(proj, 'owner', None), enemy, final_damage)
+                        self._on_player_hit_enemy_passive(getattr(proj, 'owner', None), enemy, final_damage, 'acid')
 
                         vfx_type = "death" if enemy.hp <= 0 else "hit"
                         blood = BloodVFX(enemy.hurtbox.centerx, enemy.hurtbox.centery, getattr(enemy, 'facing', 1), enemy.foot_y, vfx_type=vfx_type)
@@ -3225,7 +3632,7 @@ class Game:
                     if enemy.hp < old_hp:
                         dmg_num = DamageNumber(enemy.hurtbox.centerx, enemy.hurtbox.top, final_damage, is_crit=is_crit)
                         self.damage_numbers.add(dmg_num)
-                        self._on_player_hit_enemy_passive(getattr(proj, 'owner', None), enemy, final_damage)
+                        self._on_player_hit_enemy_passive(getattr(proj, 'owner', None), enemy, final_damage, 'wind')
 
                         vfx_type = "death" if enemy.hp <= 0 else "hit"
                         blood = BloodVFX(enemy.hurtbox.centerx, enemy.hurtbox.centery, getattr(enemy, 'facing', 1), enemy.foot_y, vfx_type=vfx_type)
@@ -3267,15 +3674,42 @@ class Game:
                         continue
 
                     enemy.take_damage(final_damage, source_x=shockwave.rect.centerx, is_crit=is_crit)
+
+                    # Ultimate is an interrupt: phase-3 bosses deliberately
+                    # ignore normal hit reactions while attacking, but leaving
+                    # ``is_attacking`` true after this forced stun makes their
+                    # AI stay in the attack branch forever once it returns to
+                    # idle. Clear the action state before applying knockback.
+                    if enemy.hp > 0:
+                        if hasattr(enemy, 'is_attacking'):
+                            enemy.is_attacking = False
+                        if hasattr(enemy, 'has_attacked'):
+                            enemy.has_attacked = False
+                        if hasattr(enemy, 'combo_step'):
+                            enemy.combo_step = 0
+                        animator = getattr(enemy, 'animator', None)
+                        if animator is not None and 'hit' in getattr(animator, 'states', {}):
+                            animator.set_state('hit', reset=True)
                     
                     # Apply knockback AFTER take_damage to prevent it from being overwritten
                     if is_front:
                         knockback_dir = shockwave.facing
-                        enemy.vel.x = knockback_dir * shockwave.knockback
-                        enemy.hurt_timer = max(getattr(enemy, 'hurt_timer', 0), 600)
+                        # Keep a short, readable stun instead of the previous
+                        # 600ms lock. The velocity is additionally capped by
+                        # remaining room to the arena edge for boss classes
+                        # that do not clamp themselves every update.
+                        left_edge = 0 if self.selected_phase == 4 else config_module.MIN_X
+                        right_edge = self.world_width if self.selected_phase == 4 else config_module.MAX_X
+                        if knockback_dir > 0:
+                            available_room = max(0, right_edge - enemy.rect.right)
+                        else:
+                            available_room = max(0, enemy.rect.left - left_edge)
+                        safe_speed = min(float(shockwave.knockback), max(0.0, available_room / 5.0))
+                        enemy.vel.x = knockback_dir * safe_speed
+                        enemy.hurt_timer = max(getattr(enemy, 'hurt_timer', 0), 360)
                     else:
                         enemy.vel.x = 0  # No knockback for rear hits
-                        enemy.hurt_timer = max(getattr(enemy, 'hurt_timer', 0), 300)
+                        enemy.hurt_timer = max(getattr(enemy, 'hurt_timer', 0), 220)
 
                     shockwave.register_hit(enemy)
                     if enemy.hp < old_hp:
@@ -3421,6 +3855,8 @@ class Game:
                 enemy.team_score_awarded = True
                 self.team_score += TEAM_SCORE_PER_KILL
 
+        self._check_campaign_score_goal()
+
         # 5. Spawn potion
         for enemy in self.enemies:
             if enemy.hp <= 0 and not getattr(enemy, 'dropped_potion', False):
@@ -3430,14 +3866,18 @@ class Game:
                     self.potions.add(potion)
                     self.all_sprites.add(potion)
 
-        # 5a. Poison Vials grant an ability point when picked up.
+        # 5a. Every enemy drops Poison EXP; tougher enemies drop more vials.
         for enemy in self.enemies:
             if enemy.hp <= 0 and not getattr(enemy, 'dropped_ability_vial', False):
                 enemy.dropped_ability_vial = True
                 if random.random() < ABILITY_VIAL_DROP_CHANCE:
-                    vial = AbilityVial(enemy.hurtbox.centerx, enemy.foot_y)
-                    self.ability_vials.add(vial)
-                    self.all_sprites.add(vial)
+                    for _ in range(self._poison_drop_count(enemy)):
+                        vial = AbilityVial(
+                            enemy.hurtbox.centerx + random.randint(-18, 18),
+                            enemy.foot_y + random.randint(-4, 4),
+                        )
+                        self.ability_vials.add(vial)
+                        self.all_sprites.add(vial)
 
         # 5aa. Red Berserk Vials: temporary attack buff with armor penalty.
         for enemy in self.enemies:
@@ -3467,13 +3907,19 @@ class Game:
                         player.hp = min(player.max_hp, player.hp + potion.heal_amount)
                         potion.kill()
 
-        # 6a. Pick up Poison Vials; spend their points from the pause menu.
+        # 6a. Poison is EXP: requirements rise each level; each level-up grants
+        # exactly one Ability Point for the pause-menu upgrades.
         for player in self.players:
             if player.hp > 0:
                 for vial in list(self.ability_vials):
                     if player.hurtbox.colliderect(vial.rect):
                         self._ensure_player_abilities(player)
-                        player.ability_points += 1
+                        player.poison_xp += vial.poison_xp
+                        while player.poison_xp >= self._poison_needed_for_next_level(player):
+                            player.poison_xp -= self._poison_needed_for_next_level(player)
+                            player.level += 1
+                            player.ability_points += 1
+                            self.effects.add(LevelUpVFX(player.hurtbox.centerx, player.hurtbox.top - 8))
                         vial.kill()
 
         # 6aa. Berserk effect refreshes on each pickup but does not stack.
@@ -3544,7 +3990,7 @@ class Game:
         ox, oy = self.camera_offset
         world_mode = self.selected_phase == 4
         zoom = self.world_zoom if world_mode else 1.0
-        entity_scale = PIXEL_RUINS_ENTITY_SCALE if world_mode else 1.0
+        entity_scale = PIXEL_RUINS_ENTITY_SCALE if world_mode else CLASSIC_PHASE_ENTITY_SCALE
         if world_mode:
             self.screen.blit(
                 self.world_render_map,
@@ -3565,37 +4011,49 @@ class Game:
             x, y = world_to_screen(rect.x, rect.y)
             return pygame.Rect(x, y, round(rect.width * zoom), round(rect.height * zoom))
 
-        def scale_world_image(image):
-            if entity_scale == 1.0:
+        def scale_world_image(image, sprite=None):
+            # Only characters are reduced in phases 1-3.  Projectiles, UI-like
+            # VFX and map art keep their original visual size.
+            scale = entity_scale if sprite is not None and hasattr(sprite, 'hurtbox') else 1.0
+            if scale == 1.0:
                 return image
             return pygame.transform.scale(
                 image,
-                (max(1, round(image.get_width() * entity_scale)), max(1, round(image.get_height() * entity_scale))),
+                (max(1, round(image.get_width() * scale)), max(1, round(image.get_height() * scale))),
             )
 
         def sprite_screen_position(sprite, image):
             """Place native-size sprites on a zoomed map without foot drift."""
-            if not world_mode:
-                return world_to_screen(sprite.rect.x, sprite.rect.y)
-
             if hasattr(sprite, 'hurtbox'):
                 # Characters are visually anchored to their logical foot.  The
-                # rect/hurtbox delta keeps custom animation pivots intact.
+                # rect/hurtbox delta keeps custom animation pivots intact when
+                # their display image is reduced in phase 1-3 or phase 4.
                 hurtbox = sprite.hurtbox
                 foot_x, foot_y = world_to_screen(hurtbox.centerx, hurtbox.bottom)
                 x = round(foot_x + (sprite.rect.x - hurtbox.centerx) * entity_scale)
                 y = round(foot_y + (sprite.rect.bottom - hurtbox.bottom) * entity_scale - image.get_height())
                 return x, y
 
+            if not world_mode:
+                return world_to_screen(sprite.rect.x, sprite.rect.y)
+
             # Projectiles/VFX retain their original size and stay centred on
             # their transformed world position.
             center_x, center_y = world_to_screen(sprite.rect.centerx, sprite.rect.centery)
             return (round(center_x - image.get_width() / 2), round(center_y - image.get_height() / 2))
         # Create a combined list of all entities that need Y-sorting
+        # Skill auras must stay above character sprites.  If they participate
+        # in the normal Y-sort, a tall character can completely cover Holy,
+        # Shield and similar effects.
+        foreground_skill_effects = [
+            effect for effect in self.effects
+            if isinstance(effect, SkillEffect) or getattr(effect, 'draw_foreground', False)
+        ]
+        world_effects = [effect for effect in self.effects if effect not in foreground_skill_effects]
         render_list = (list(self.all_sprites) + list(self.arrows) +
                        list(self.water_projectiles) + list(self.water_blast_projectiles) + list(self.wind_projectiles) + list(self.light_projectiles) + list(self.dark_projectiles) +
                        list(self.wood_projectiles) + list(self.acid_projectiles) +
-                       list(self.enemy_projectiles) + list(self.effects))
+                       list(self.enemy_projectiles) + world_effects)
 
         def get_sort_y(s):
             if hasattr(s, 'foot_y'):
@@ -3638,13 +4096,19 @@ class Game:
             self.screen.blit(shadow_surf, (sx, sy))
 
         for sprite in sorted_sprites:
-            image = scale_world_image(sprite.image)
+            image = scale_world_image(sprite.image, sprite)
             if self._entity_is_in_tunnel(sprite):
                 # Keep the original pixel art but let the map's upper layer
                 # visually read through it, as if the character is below it.
                 image = image.copy()
                 image.set_alpha(min(getattr(sprite, 'alpha', 255), PIXEL_RUINS_TUNNEL_ENTITY_ALPHA))
             x, y = sprite_screen_position(sprite, image)
+            self.screen.blit(image, (x, y))
+
+        # Draw active skill effects last, above all world characters.
+        for effect in foreground_skill_effects:
+            image = scale_world_image(effect.image, effect)
+            x, y = sprite_screen_position(effect, image)
             self.screen.blit(image, (x, y))
 
 
@@ -3766,6 +4230,7 @@ class Game:
             self.draw_archer_ultimate_hud()
         self.draw_archer_arrow_hud()
         self.draw_team_score_hud()
+        self.draw_boss_spawn_warning()
 
         # Boss HP bar
         if self.selected_phase == 1 and self.boss_spawned:
@@ -3799,39 +4264,84 @@ class Game:
 
         if self.paused:
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 150))
+            overlay.fill((0, 0, 0, 185))
             self.screen.blit(overlay, (0, 0))
+            self._draw_pause_scroll()
+            if self.pause_scroll_state == 'open':
+                font = pygame.font.SysFont('Arial', 46, bold=True)
+                title = font.render("PAUSED", True, (82, 50, 24))
+                self.screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 188)))
 
-            font = pygame.font.SysFont('Arial', 56, bold=True)
-            title = font.render("PAUSED", True, (255, 230, 120))
-            self.screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 22)))
-
-            hint_font = pygame.font.SysFont('Arial', 24)
-            hint = hint_font.render("Press ESC to continue", True, (245, 245, 245))
-            self.screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 34)))
-            self.draw_pause_ability_panels()
+                hint_font = pygame.font.SysFont('Arial', 18, bold=True)
+                hint = hint_font.render("ESC: Continue", True, (110, 70, 31))
+                self.screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 145)))
+                self.draw_pause_ability_panels()
 
         pygame.display.flip()
 
+    def _pause_scroll_frames(self, state):
+        """Load and cache the user-provided paper roll animation frames."""
+        cache = getattr(self, '_pause_scroll_frame_cache', None)
+        if cache is None:
+            cache = self._pause_scroll_frame_cache = {}
+        if state not in cache:
+            folder = os.path.join('assets', 'ui', 'bg', 'Appear' if state == 'opening' else 'Disappear')
+            frames = []
+            for index in range(11):
+                try:
+                    frames.append(pygame.image.load(os.path.join(folder, f'{index}.png')).convert_alpha())
+                except Exception:
+                    continue
+            cache[state] = frames
+        return cache[state]
+
+    def _draw_pause_scroll(self):
+        """Draw scroll open/close, advancing the state even while gameplay is frozen."""
+        state = self.pause_scroll_state or 'open'
+        animation_state = 'opening' if state in ('opening', 'open') else 'closing'
+        frames = self._pause_scroll_frames(animation_state)
+        if not frames:
+            self.pause_scroll_state = 'open'
+            return
+        elapsed = pygame.time.get_ticks() - self.pause_scroll_started_at
+        index = min(len(frames) - 1, elapsed // 35) if state != 'open' else len(frames) - 1
+        frame = frames[index]
+        # The source canvas has generous transparent margins. Enlarge it so
+        # the parchment itself becomes the pause-menu background.
+        scale = 1.60
+        display_size = (round(frame.get_width() * scale), round(frame.get_height() * scale))
+        image = pygame.transform.scale(frame, display_size)
+        self.screen.blit(image, image.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
+
+        if index == len(frames) - 1:
+            if state == 'opening':
+                self.pause_scroll_state = 'open'
+            elif state == 'closing':
+                self.paused = False
+                self.pause_scroll_state = None
+
     def draw_pause_ability_panels(self):
         """Show each player's Poison Vial points and upgrade choices."""
-        panel_w, panel_h = 410, 166
-        panel_y = HEIGHT // 2 + 76
-        title_font = pygame.font.SysFont('Arial', 20, bold=True)
-        text_font = pygame.font.SysFont('Arial', 17)
-        small_font = pygame.font.SysFont('Arial', 14)
+        # Keep both panels entirely inside the opened parchment area.
+        panel_w, panel_h, gap = 322, 158, 24
+        panel_y = HEIGHT // 2 - 18
+        start_x = (WIDTH - (panel_w * 2 + gap)) // 2
+        title_font = pygame.font.SysFont('Arial', 17, bold=True)
+        text_font = pygame.font.SysFont('Arial', 14, bold=True)
+        small_font = pygame.font.SysFont('Arial', 12)
 
         for index, player in enumerate(self.players[:2]):
             self._ensure_player_abilities(player)
-            x = 34 if index == 0 else WIDTH - panel_w - 34
+            x = start_x + index * (panel_w + gap)
             panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-            panel.fill((24, 35, 30, 235))
-            pygame.draw.rect(panel, (95, 220, 115), panel.get_rect(), 2, border_radius=8)
+            panel.fill((57, 40, 24, 218))
+            pygame.draw.rect(panel, (174, 126, 63), panel.get_rect(), 2, border_radius=5)
 
             name = 'P1 KNIGHT' if index == 0 else 'P2 ARCHER'
             points = player.ability_points
-            panel.blit(title_font.render(f"{name}  |  Poison Vials: {points}", True, (230, 255, 220)), (14, 12))
-            panel.blit(small_font.render(f"Max level per stat: {ABILITY_MAX_LEVEL}", True, (180, 205, 180)), (14, 39))
+            poison_text = f"LV.{player.level}  Poison {player.poison_xp}/{self._poison_needed_for_next_level(player)}  Ability: {points}"
+            panel.blit(title_font.render(f"{name}", True, (255, 230, 166)), (13, 11))
+            panel.blit(small_font.render(poison_text, True, (215, 188, 133)), (13, 35))
 
             levels = player.ability_levels
             key_labels = ('1', '2', '3') if index == 0 else ('7', '8', '9')
@@ -3842,9 +4352,9 @@ class Game:
             ]
             for row_index, (label, bonus, key) in enumerate(rows):
                 level = levels[key]
-                color = (255, 230, 130) if level < ABILITY_MAX_LEVEL else (145, 145, 145)
+                color = (255, 224, 142) if level < ABILITY_MAX_LEVEL else (150, 130, 104)
                 line = f"[{key_labels[row_index]}] {label:<6} Lv.{level}/{ABILITY_MAX_LEVEL}  {bonus}"
-                panel.blit(text_font.render(line, True, color), (16, 65 + row_index * 29))
+                panel.blit(text_font.render(line, True, color), (14, 59 + row_index * 28))
 
             self.screen.blit(panel, (x, panel_y))
 
@@ -3866,13 +4376,14 @@ class Game:
 
     def draw_player_resource_bars(self, player, offset=0, label="P1"):
         self._ensure_player_resources(player)
+        self._ensure_player_abilities(player)
         x = 10 + offset
         y = 10
         w = 220
         h = 16
 
         font = pygame.font.SysFont('Arial', 14, bold=True)
-        name = font.render(label, True, (255, 255, 255))
+        name = font.render(f"{label}  LV.{player.level}  Poison {player.poison_xp}/{self._poison_needed_for_next_level(player)}", True, (255, 255, 255))
         self.screen.blit(name, (x, y - 2))
 
         def _draw_bar(by, ratio, bg, fg, text):
@@ -4005,10 +4516,32 @@ class Game:
         pygame.draw.rect(self.screen, (255, 205, 70), panel, 2, border_radius=6)
         title_font = pygame.font.SysFont('Arial', 11, bold=True)
         score_font = pygame.font.SysFont('Arial', 22, bold=True)
-        title = title_font.render('TEAM SCORE', True, (255, 230, 140))
-        value = score_font.render(str(getattr(self, 'team_score', 0)), True, (255, 255, 255))
+        goal = getattr(self, 'campaign_score_goal', 1000)
+        is_campaign = getattr(self, 'campaign_mode', False)
+        title = title_font.render('TEAM SCORE' if not is_campaign else f'SCORE / {goal}', True, (255, 230, 140))
+        value_text = str(getattr(self, 'team_score', 0)) if not is_campaign else f"{getattr(self, 'team_score', 0)} / {goal}"
+        value = score_font.render(value_text, True, (255, 255, 255))
         self.screen.blit(title, title.get_rect(center=(panel.centerx, panel.y + 11)))
         self.screen.blit(value, value.get_rect(center=(panel.centerx, panel.y + 32)))
+
+    def draw_boss_spawn_warning(self):
+        """Screen-space alert that remains visible even if the boss spawns off-camera."""
+        now = pygame.time.get_ticks()
+        if now >= getattr(self, 'boss_warning_until', 0):
+            return
+        symbol_name = getattr(self, 'boss_warning_symbol', 'alert')
+        frames = SymbolVFX.frames(symbol_name)
+        image = frames[(now // 45) % len(frames)] if frames else None
+        label = getattr(self, 'boss_warning_label', 'BOSS APPROACHING')
+        panel = pygame.Surface((360, 82), pygame.SRCALPHA)
+        panel.fill((58, 12, 14, 220) if symbol_name == 'alert' else (65, 45, 8, 220))
+        panel_rect = panel.get_rect(midtop=(WIDTH // 2, 65))
+        self.screen.blit(panel, panel_rect)
+        pygame.draw.rect(self.screen, (255, 80, 80) if symbol_name == 'alert' else (255, 215, 60), panel_rect, 3)
+        if image is not None:
+            self.screen.blit(image, image.get_rect(midleft=(panel_rect.left + 14, panel_rect.centery)))
+        text = pygame.font.SysFont('Arial', 25, bold=True).render(label, True, (255, 235, 195))
+        self.screen.blit(text, text.get_rect(center=(panel_rect.centerx + 25, panel_rect.centery)))
 
     def draw_boss_health_bar(self, hp, max_hp, boss_name="BOSS"):
         """Draw a large boss health bar at the bottom of the screen."""

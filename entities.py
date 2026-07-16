@@ -414,8 +414,8 @@ class KnightUltimateShockwave(pygame.sprite.Sprite):
     """A massive ground shockwave spawned at the peak of the Knight's ultimate.
 
     The shockwave covers a wide area in the knight's facing direction and deals
-    KNIGHT_ULTIMATE_DAMAGE.  Every enemy struck receives an enormous knockback
-    (KNIGHT_ULTIMATE_KNOCKBACK) so they are blasted far across the screen.
+    KNIGHT_ULTIMATE_DAMAGE. Every enemy struck receives a controlled knockback
+    (KNIGHT_ULTIMATE_KNOCKBACK) without being launched beyond the arena.
     The hitbox lives for 250 ms — long enough to catch enemies stepping into it.
 
     Collision tracking (already_hit_targets) ensures each enemy is damaged only
@@ -690,13 +690,18 @@ class Knight(pygame.sprite.Sprite, HealthMixin):
             self.hp = 0
             self.on_death()
         else:
-            if getattr(self, 'animator', None) is not None:
+            # Committed melee swings must finish. Damage is still applied, but
+            # do not replace the attack state with the hurt animation or lock
+            # the player in hurt_timer halfway through the strike.
+            is_attacking = getattr(self, 'animator', None) is not None and self.animator.state in ('attack1', 'attack2', 'attack3')
+            if not is_attacking and getattr(self, 'animator', None) is not None:
                 self.animator.set_state('hit', reset=True)
-            self.vel.x = -self.facing * 3
-            self.hurt_timer = 300
-            self.combo_step = 0
-            self.combo_buffered = False
-            self.exceeded_combo = False
+            if not is_attacking:
+                self.vel.x = -self.facing * 3
+                self.hurt_timer = 300
+                self.combo_step = 0
+                self.combo_buffered = False
+                self.exceeded_combo = False
 
     def update(self, dt, keys=None, groups=None):
         if keys is None or groups is None:
@@ -2613,12 +2618,16 @@ class Archer(pygame.sprite.Sprite, HealthMixin):
             self.hp = 0
             self.on_death()
         else:
-            if getattr(self, 'animator', None) is not None:
+            # Archer shots are committed once their attack animation starts:
+            # receiving damage cannot cancel the shot or replace it with hit.
+            is_attacking = getattr(self, 'animator', None) is not None and self.animator.state in ('attack', 'attack_combo')
+            if not is_attacking and getattr(self, 'animator', None) is not None:
                 self.animator.set_state('hit', reset=True)
-            self.vel.x = -self.facing * 3
-            self.hurt_timer = 300
-            self.combo_step = 0
-            self.combo_buffered = False
+            if not is_attacking:
+                self.vel.x = -self.facing * 3
+                self.hurt_timer = 300
+                self.combo_step = 0
+                self.combo_buffered = False
 
     def update(self, dt, keys=None, groups=None):
         if keys is None or groups is None:
@@ -3788,9 +3797,11 @@ class FatCultist(pygame.sprite.Sprite, HealthMixin):
             if self.animator.state != 'death':
                 self.animator.set_state('death', reset=True)
             self.animator.update(dt)
+            # Apply the current frame before testing completion; previously the
+            # death animation advanced internally but the displayed image froze.
+            self._update_visuals()
             if self.animator.is_finished():
                 self.kill()
-            self._update_hurtbox()
             return
             
         if self.hurt_timer > 0:
@@ -3839,7 +3850,9 @@ class FatCultist(pygame.sprite.Sprite, HealthMixin):
                     self.animator.set_state('attack2', reset=True)
                     self.combo_step = 2
             else:
-                self.animator.set_state('run')
+                # Do not reset this looping state every update, otherwise it
+                # remains permanently on frame 0 while the Cultist moves.
+                self.animator.set_state('run', reset=False)
                 dist = math.hypot(dist_x, dist_y)
                 if dist > 0:
                     self.vel.x = (dist_x / dist) * self.speed
@@ -4011,9 +4024,10 @@ class DeathBringer(pygame.sprite.Sprite, HealthMixin):
             if self.animator.state != 'death':
                 self.animator.set_state('death', reset=True)
             self.animator.update(dt)
+            # Keep updating the visible sprite while the death sheet plays.
+            self._update_visuals()
             if self.animator.is_finished():
                 self.kill()
-            self._update_hurtbox()
             return
             
         if self.hurt_timer > 0:
@@ -4061,7 +4075,9 @@ class DeathBringer(pygame.sprite.Sprite, HealthMixin):
                 self.has_attacked = False
                 self.animator.set_state('attack', reset=True)
             else:
-                self.animator.set_state('run')
+                # ``set_state`` resets by default; using False lets the run
+                # sheet progress normally instead of restarting every frame.
+                self.animator.set_state('run', reset=False)
                 dist = math.hypot(dist_x, dist_y)
                 if dist > 0:
                     self.vel.x = (dist_x / dist) * self.speed
@@ -4177,11 +4193,12 @@ class HealthPotion(pygame.sprite.Sprite):
 
 
 class AbilityVial(pygame.sprite.Sprite):
-    """Green Poison Vial dropped by enemies; grants one ability point."""
+    """Green Poison Vial dropped by enemies; adds one Poison EXP."""
 
-    def __init__(self, x, y, lifetime=15000):
+    def __init__(self, x, y, lifetime=15000, poison_xp=1):
         super().__init__()
         self.lifetime = lifetime
+        self.poison_xp = max(1, int(poison_xp))
         self.spawn_time = pygame.time.get_ticks()
         try:
             raw_img = pygame.image.load("assets/items/potions/green.png").convert_alpha()

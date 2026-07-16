@@ -3,6 +3,10 @@ WIDTH = 960
 HEIGHT = 640
 FPS = 60
 
+# Test-only debug overlay. Used by test.py for every phase: collision zones,
+# movement foot boxes, combat hurtboxes and attack hitboxes.
+TEST_DRAW_DEBUG_BOXES = False
+
 # Asset paths (adjust names to match your files)
 MAP_IMAGE = "assets/maps/map1.jpeg"
 PLAYER_SPRITESHEET = "assets/hero/knight/spritesheet.png"
@@ -133,7 +137,7 @@ ULTIMATE_EFFECT_IMAGE = "assets/hero/archer/archer_ultimate_effect.png"
 
 # Knight Ultimate Skill Settings
 KNIGHT_ULTIMATE_DAMAGE = 80            # base damage of the shockwave slam
-KNIGHT_ULTIMATE_KNOCKBACK = 28         # pixel velocity knocked back per hit (immense)
+KNIGHT_ULTIMATE_KNOCKBACK = 9          # controlled knockback; avoids launching enemies off-map
 KNIGHT_ULTIMATE_COOLDOWN = 10000       # ms cooldown between knight ultimates
 KNIGHT_ULTIMATE_CAST_FRAME = 34        # animation frame at which the shockwave is spawned (0-indexed)
 
@@ -221,9 +225,19 @@ SKILL_DROP_POOL = list(SKILL_TYPES)
 
 # ── Ability upgrades / Poison Vials ─────────────────────────────────────────
 
-# Every slain enemy can drop a green Poison Vial.  Picking it up grants one
-# ability point, which can be spent only while the game is paused.
-ABILITY_VIAL_DROP_CHANCE = 0.35
+# Every slain enemy drops Poison Vials. Poison is EXP: collecting enough of it
+# levels up the character and awards one Ability Point.
+ABILITY_VIAL_DROP_CHANCE = 1.0
+POISON_LEVEL_BASE_REQUIRED = 3
+POISON_LEVEL_REQUIREMENT_PER_LEVEL = 2
+# Stronger enemies drop more vials. Unlisted enemies use the default of 1.
+POISON_VIAL_DROP_COUNT = {
+    'default': 1,
+    'Cyclop': 2,
+    'FatCultist': 3,
+    'GoblinTank': 5,
+    'DeathBringer': 5,
+}
 ABILITY_MAX_LEVEL = 5
 ABILITY_ATTACK_BONUS_PER_LEVEL = 3
 ABILITY_ARMOR_BONUS_PER_LEVEL = 12
@@ -239,6 +253,10 @@ BERSERK_ARMOR_EFFECTIVENESS_MULTIPLIER = 0.85
 # Holy is a timed aura: healing-on-hit and regeneration remain active only
 # while this duration bar is running.
 HOLY_EFFECT_DURATION_MS = 8000
+
+# Display-only scale for players and enemies in the original phase 1-3 maps.
+# Hitboxes and movement remain at their authored logical size.
+CLASSIC_PHASE_ENTITY_SCALE = 0.78
 
 # Visual zoom used only by the scrollable Pixel Ruins world map.
 PIXEL_RUINS_CAMERA_ZOOM = 1.3
@@ -295,7 +313,7 @@ SKILL_DROP_CONFIG = {
 				'holy': 8,
 				'wood': 8,
 				'acid': 7,
-				'dark': 6,
+				'dark': 60000000,
 				'earth': 4,
 				'smoke': 4,
 				'light': 3,
@@ -495,6 +513,7 @@ SKILL_COMBAT_CONFIG = {
 	},
 	'shield': {
 		'defense_multiplier': 0.58,
+		'duration_ms': 5500,
 	},
 	'earth': {
 		'cast_damage': 18,
@@ -514,9 +533,15 @@ SKILL_COMBAT_CONFIG = {
 	},
 	'smoke': {
 		'windup_multiplier': 1.0,
+		'duration_ms': 4000,
+		'dodge_chance': 0.45,
 	},
 	'thunder': {
 		'cast_damage': 26,
+		'cast_enemy_x_range': 260,
+		'cast_enemy_y_range': 120,
+		'slow_duration_ms': 750,
+		'slow_mult': 0.62,
 	},
 	'water_blast': {
 		'cast_damage': 20,
