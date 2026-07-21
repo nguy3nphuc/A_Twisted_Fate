@@ -1,115 +1,100 @@
-# A Twisted Fate - Beat-em-up Game (pygame)
+# Infiniz Fantasy - Co-op Beat'em-up (pygame)
 
-A side-scrolling beat-em-up action game built with pygame using object-oriented design patterns. Features multiple heroes, enemy waves, boss battles, and a combo attack system.
+Infiniz Fantasy is a 2-player local co-op beat-em-up built with Python and pygame. The game mixes action combat, enemy waves, boss encounters, skill drops, and passive effects in a stylized arcade presentation.
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Run the Game
+### 2. Run the game
 
 ```bash
 python main.py
 ```
 
-## Game Features
+## What’s in the game
 
-- **Hero Selection**: Choose between Knight and Archer
-- **4 Phases**: Goblin Invasion, The Menagerie, The Cult, Pixel Ruins Arena
-- **Combat System**: 
-  - 3-hit combo attacks
-  - Defense mechanics
-  - Ultimate abilities
-  - Special projectile attacks (Archer)
-- **Enemy Variety**: Multiple enemy types with unique attack patterns
-- **Boss Battles**: Boss encounter in each phase
-- **Visual Effects**: Blood effects, hit feedback, damage numbers, camera shake
+- 2-player local co-op gameplay
+- Two playable heroes:
+  - Knight: melee combat, defense, ultimate shockwave
+  - Archer: ranged attacks, dashes, ultimate beam, magic arrows
+- 4 phases:
+  - Phase 1: Goblin Invasion
+  - Phase 2: The Menagerie
+  - Phase 3: The Cult
+  - Phase 4: Pixel Ruins Arena
+- Combat systems including:
+  - combo attacks
+  - blocking/defense
+  - ultimate abilities
+  - projectile and spell effects
+  - damage numbers and visual VFX
+- Enemy variety with unique movement and attack patterns
+- Boss and miniboss encounters
+- Skill drops and upgradeable player abilities
+- Auto-respawn after 20 seconds if the teammate is still alive
 
 ## Controls
 
-### Menu Navigation
-- **1**: Select Knight / Select Phase 1 (Goblin Invasion)
-- **2**: Select Archer / Select Phase 2 (The Menagerie)
-- **3**: Select Phase 3 (The Cult)
-- **4**: Select Phase 4 (Pixel Ruins Arena)
-- **ESC**: Go back
-- **R**: Restart after defeat
+### Menu / navigation
+- 1 / 2 / 3 / 4: choose hero / phase
+- ESC: pause or go back
+- R: restart after defeat
 
-### Gameplay
-- **← / A**: Move left
-- **→ / D**: Move right
-- **↑ / W**: Move up
-- **↓ / S**: Move down
-- **J**: Attack (3-hit combo)
-- **K**: Defend
-- **L**: Ultimate ability
+### Player 1 (Knight)
+- A / D / W / S: move
+- J: attack
+- K: defend
+- L: ultimate
 
-## Project Structure
+### Player 2 (Archer)
+- Arrow keys: move
+- NumPad 1 / 4: attack
+- NumPad 2 / 5: dash
+- NumPad 3 / 6: ultimate
+- NumPad 0: cycle magic arrow type
 
-```
-├── main.py              # Game entry point
-├── game.py              # Main game loop & state management
-├── entities.py          # Player and enemy classes
-├── sprites.py           # Sprite animation system
-├── config.py            # Configuration and constants
-├── box_tool.py          # Sprite hitbox editor tool
-├── pivot_tool.py        # Sprite pivot point editor tool
-├── requirements.txt     # Dependencies
-└── assets/              # Game assets
-    ├── maps/            # Background images
-    ├── hero/            # Player spritesheets
-    │   ├── knight/
-    │   └── archer/
-    ├── monsters/        # Enemy spritesheets
-    │   ├── goblin_tank/
-    │   ├── goblin_warrior/
-    │   ├── goblin_spearman/
-    │   ├── lizardman/
-    │   ├── kobold/
-    │   ├── fire_worm/
-    │   ├── cyclop/
-    │   ├── skeleton/
-    │   ├── troll/
-    │   ├── fat_cultist/
-    │   └── bringer_of_death/
-    ├── vfx/             # Visual effects
-    ├── animation_metadata.json  # Animation frame data
-    └── font/            # Font files
+### Skills
+- N: cycle P1 target skill
+- M: use P1 target skill
+- 7 / 8: cycle and use P2 target skill
+
+## Project structure
+
+```text
+├── main.py                      # Game entry point
+├── config.py                    # Game balance, constants, and config
+├── requirements.txt             # Python dependencies
+├── assets/                      # Sprites, maps, VFX, animations, fonts
+├── entities/                    # Heroes, enemies, items, VFX classes
+├── game/                        # Game loop and gameplay systems
+│   ├── game_engine.py           # Main engine and update/render loop
+│   ├── skills_projectiles.py    # Skill/projectile logic
+│   └── respawn.py               # Auto-respawn timing helper
+├── tools/                       # Utilities for map, pivot, hitbox editing
+└── tests/                       # Unit tests for gameplay helpers
 ```
 
-## Configuration
+## Configuration and tuning
 
-Game settings are in `config.py`:
-- Screen dimensions (WIDTH, HEIGHT)
-- FPS and physics constants
-- Asset paths
-- Collision boundaries
-- Attack ranges and damage values
+The gameplay balance and constants are defined in:
+- config.py
+- assets/animation_metadata.json
+- assets/skills/ui_tune.json
 
-## Tools
+These files control:
+- screen size and FPS
+- combat values and cooldowns
+- enemy stats and behavior
+- skill UI layout and animation timing
 
-### Sprite Box Editor (`box_tool.py`)
-Edit sprite hitboxes and hurtboxes.
-- Arrow keys: Move
-- H: Toggle hurtbox
-- B: Toggle hitbox
-- SPACE: Next frame
-- R: Reset
-- S: Save
-- ESC: Exit
+## Development notes
 
-### Sprite Pivot Editor (`pivot_tool.py`)
-Adjust sprite pivot points.
-- Arrow keys: Move pivot
-- ESC: Exit
-
-## Notes
-
-- Animation frames are defined in `animation_metadata.json`
-- Collision detection uses rectangular hitboxes with depth filtering
-- Damage numbers and effects provide visual feedback for combat actions
-- Each enemy type has unique AI and attack patterns
+- Animation frames and metadata are loaded from assets/animation_metadata.json
+- Collision logic uses hurtboxes/hitboxes with depth filtering
+- The engine is organized around sprite groups and per-frame update/render flow
+- The project also includes debugging and asset-authoring tools in the tools/ folder
